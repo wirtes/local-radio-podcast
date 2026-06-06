@@ -1,6 +1,6 @@
 # Local Radio Podcast
 
-A small Python app that turns one or more local MP3 directories into a private podcast RSS feed for your local network.
+A small Python app that turns a root folder of MP3 directories into private podcast RSS feeds for your local network.
 
 ## Setup
 
@@ -14,8 +14,18 @@ cp config.example.toml config.toml
 Edit `config.toml`:
 
 - Set `server.base_url` to this computer's LAN URL, such as `http://192.168.1.25:8000`.
-- Add every MP3 folder you want scanned to `feed.directories`.
-- Adjust the feed title, description, and author.
+- Set `feed.root_directory` to the folder that contains your podcast folders.
+- Adjust the library title, description, and author.
+
+Every immediate directory inside `feed.root_directory` becomes a separate podcast. For example:
+
+```text
+/Users/you/Music/Local Podcasts/
+  Morning Show/
+    episode-1.mp3
+  Interviews/
+    guest-a.mp3
+```
 
 Find your LAN IP on macOS with:
 
@@ -32,7 +42,7 @@ ipconfig getifaddr en0
 Then open:
 
 ```text
-http://YOUR_LAN_IP:8000/feed.xml
+http://YOUR_LAN_IP:8000/
 ```
 
 ## Subscribe in Apple Podcasts
@@ -46,12 +56,15 @@ File -> Follow a Show by URL...
 Enter:
 
 ```text
-http://YOUR_LAN_IP:8000/feed.xml
+http://YOUR_LAN_IP:8000/podcasts/PODCAST_ID/feed.xml
 ```
+
+The homepage lists the feed URL for each podcast folder.
 
 ## Behavior
 
-- The app recursively scans all configured directories for `.mp3` files.
+- Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
+- Each podcast recursively scans its own directory for `.mp3` files.
 - RSS items are sorted newest-first by ID3 date metadata when available, otherwise by file modification time.
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
-- MP3 files are served only when they were found inside the configured directories.
+- MP3 files are served only when they were found inside the requested podcast directory.

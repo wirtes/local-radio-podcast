@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import re
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
@@ -28,10 +29,14 @@ class PodcastServerTest(unittest.TestCase):
     def test_feed_and_audio_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            audio_dir = root / "audio"
-            audio_dir.mkdir()
+            library_dir = root / "library"
+            audio_dir = library_dir / "Kitchen Radio"
+            other_dir = library_dir / "Evening News"
+            audio_dir.mkdir(parents=True)
+            other_dir.mkdir()
             mp3 = audio_dir / "episode.mp3"
             mp3.write_bytes(b"not a real mp3, but enough for send_file")
+            (other_dir / "briefing.mp3").write_bytes(b"another fake mp3")
 
             config = root / "config.toml"
             config.write_text(
@@ -45,7 +50,7 @@ port = 8000
 title = "Kitchen Radio"
 description = "Local shows"
 author = "KVCU"
-directories = ["{audio_dir}"]
+root_directory = "{library_dir}"
 """,
                 encoding="utf-8",
             )
@@ -54,7 +59,13 @@ directories = ["{audio_dir}"]
                 flask_app = create_app(config)
                 client = flask_app.test_client()
 
-                feed_response = client.get("/feed.xml")
+                index_response = client.get("/")
+                self.assertEqual(index_response.status_code, 200)
+                self.assertIn(b"Kitchen Radio", index_response.data)
+                self.assertIn(b"Evening News", index_response.data)
+
+                feed_path = self._first_link_for(index_response.data.decode(), "Kitchen Radio")
+                feed_response = client.get(feed_path)
                 self.assertEqual(feed_response.status_code, 200)
 
                 rss = ET.fromstring(feed_response.data)
@@ -71,6 +82,14 @@ directories = ["{audio_dir}"]
                 self.assertEqual(audio_response.status_code, 200)
                 self.assertEqual(audio_response.data, mp3.read_bytes())
                 audio_response.close()
+
+    def _first_link_for(self, html: str, title: str) -> str:
+        match = re.search(
+            rf'<a href="http://127\.0\.0\.1:8000(?P<path>[^"]+)">{re.escape(title)}</a>',
+            html,
+        )
+        self.assertIsNotNone(match)
+        return match.group("path")
 
 
 if __name__ == "__main__":

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import mimetypes
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,7 +26,7 @@ ET.register_namespace("content", CONTENT_NS)
 
 
 @dataclass(frozen=True)
-class FeedConfig:
+class AppConfig:
     title: str
     description: str
     author: str
@@ -34,10 +34,18 @@ class FeedConfig:
     explicit: str
     image_url: str | None
     category: str
-    directories: tuple[Path, ...]
+    root_directory: Path
     base_url: str | None
     host: str
     port: int
+
+
+@dataclass(frozen=True)
+class Podcast:
+    id: str
+    path: Path
+    title: str
+    description: str
 
 
 @dataclass(frozen=True)
@@ -61,7 +69,7 @@ class Episode:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def load_config(path: Path) -> FeedConfig:
+def load_config(path: Path) -> AppConfig:
     if not path.exists():
         raise FileNotFoundError(
             f"Config file not found: {path}. Copy config.example.toml to config.toml first."
@@ -70,25 +78,24 @@ def load_config(path: Path) -> FeedConfig:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     feed = data.get("feed", {})
     server = data.get("server", {})
-    raw_directories = feed.get("directories", [])
+    raw_root = feed.get("root_directory")
 
-    if not raw_directories:
-        raise ValueError("Add at least one MP3 directory to feed.directories in config.toml.")
+    if not raw_root:
+        raise ValueError("Set feed.root_directory in config.toml.")
 
-    directories = tuple(Path(item).expanduser().resolve() for item in raw_directories)
-    missing = [str(directory) for directory in directories if not directory.is_dir()]
-    if missing:
-        raise ValueError(f"Configured directories do not exist: {', '.join(missing)}")
+    root_directory = Path(str(raw_root)).expanduser().resolve()
+    if not root_directory.is_dir():
+        raise ValueError(f"Configured root directory does not exist: {root_directory}")
 
-    return FeedConfig(
-        title=str(feed.get("title", "Local MP3 Podcast")),
-        description=str(feed.get("description", "A private podcast feed from local MP3 files.")),
+    return AppConfig(
+        title=str(feed.get("title", "Local MP3 Podcasts")),
+        description=str(feed.get("description", "Private podcast feeds from local MP3 folders.")),
         author=str(feed.get("author", "Local Podcast")),
         language=str(feed.get("language", "en-us")),
         explicit=str(feed.get("explicit", "false")).lower(),
         image_url=feed.get("image_url") or None,
         category=str(feed.get("category", "Music")),
-        directories=directories,
+        root_directory=root_directory,
         base_url=server.get("base_url") or None,
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 8000)),
@@ -104,7 +111,12 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     @app.get("/")
     def index() -> Response:
-        feed_url = absolute_url("feed", config)
+        podcasts = scan_podcasts(config)
+        podcast_links = "\n".join(
+            f'  <li><a href="{absolute_url("feed", config, podcast_id=podcast.id)}">'
+            f"{escape_html(podcast.title)}</a></li>"
+            for podcast in podcasts
+        )
         body = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -115,21 +127,29 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 <body>
   <h1>{escape_html(config.title)}</h1>
   <p>{escape_html(config.description)}</p>
-  <p><a href="{feed_url}">Podcast RSS feed</a></p>
+  <ul>
+{podcast_links}
+  </ul>
 </body>
 </html>
 """
         return Response(body, mimetype="text/html")
 
-    @app.get("/feed.xml")
-    def feed() -> Response:
-        episodes = scan_episodes(config)
-        xml = build_feed_xml(config, episodes)
+    @app.get("/podcasts/<podcast_id>/feed.xml")
+    def feed(podcast_id: str) -> Response:
+        podcast = find_podcast(config, podcast_id)
+        if podcast is None:
+            abort(404)
+        episodes = scan_episodes(config, podcast)
+        xml = build_feed_xml(config, podcast, episodes)
         return Response(xml, mimetype="application/rss+xml; charset=utf-8")
 
-    @app.get("/audio/<episode_id>.mp3")
-    def audio(episode_id: str):
-        episode = find_episode(config, episode_id)
+    @app.get("/podcasts/<podcast_id>/audio/<episode_id>.mp3")
+    def audio(podcast_id: str, episode_id: str):
+        podcast = find_podcast(config, podcast_id)
+        if podcast is None:
+            abort(404)
+        episode = find_episode(config, podcast, episode_id)
         if episode is None:
             abort(404)
         return send_file(
@@ -143,23 +163,43 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     return app
 
 
-def scan_episodes(config: FeedConfig) -> list[Episode]:
+def scan_podcasts(config: AppConfig) -> list[Podcast]:
+    podcasts = [
+        Podcast(
+            id=podcast_id(path),
+            path=path,
+            title=path.name,
+            description=f"{config.description} ({path.name})",
+        )
+        for path in sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
+        if path.is_dir()
+    ]
+    return podcasts
+
+
+def find_podcast(config: AppConfig, podcast_id: str) -> Podcast | None:
+    for podcast in scan_podcasts(config):
+        if podcast.id == podcast_id:
+            return podcast
+    return None
+
+
+def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     episodes: list[Episode] = []
-    for directory in config.directories:
-        for path in sorted(directory.rglob("*.mp3")):
-            if path.is_file():
-                episodes.append(read_episode(path, config))
+    for path in sorted(podcast.path.rglob("*.mp3")):
+        if path.is_file():
+            episodes.append(read_episode(path, config))
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
 
 
-def find_episode(config: FeedConfig, episode_id: str) -> Episode | None:
-    for episode in scan_episodes(config):
+def find_episode(config: AppConfig, podcast: Podcast, episode_id: str) -> Episode | None:
+    for episode in scan_episodes(config, podcast):
         if episode.id == episode_id:
             return episode
     return None
 
 
-def read_episode(path: Path, config: FeedConfig) -> Episode:
+def read_episode(path: Path, config: AppConfig) -> Episode:
     stat = path.stat()
     metadata = read_audio_metadata(path)
     title = metadata.get("title") or path.stem
@@ -210,13 +250,13 @@ def parse_pubdate(raw_date: str | None, fallback_mtime: float) -> datetime:
     return datetime.fromtimestamp(fallback_mtime, timezone.utc)
 
 
-def build_feed_xml(config: FeedConfig, episodes: list[Episode]) -> bytes:
+def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode]) -> bytes:
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
 
-    add_text(channel, "title", config.title)
+    add_text(channel, "title", podcast.title)
     add_text(channel, "link", absolute_url("index", config))
-    add_text(channel, "description", config.description)
+    add_text(channel, "description", podcast.description)
     add_text(channel, "language", config.language)
     add_text(channel, f"{{{ITUNES_NS}}}author", config.author)
     add_text(channel, f"{{{ITUNES_NS}}}explicit", config.explicit)
@@ -225,7 +265,7 @@ def build_feed_xml(config: FeedConfig, episodes: list[Episode]) -> bytes:
         channel,
         f"{{{ATOM_NS}}}link",
         {
-            "href": absolute_url("feed", config),
+            "href": absolute_url("feed", config, podcast_id=podcast.id),
             "rel": "self",
             "type": "application/rss+xml",
         },
@@ -234,7 +274,7 @@ def build_feed_xml(config: FeedConfig, episodes: list[Episode]) -> bytes:
     if config.image_url:
         image = ET.SubElement(channel, "image")
         add_text(image, "url", config.image_url)
-        add_text(image, "title", config.title)
+        add_text(image, "title", podcast.title)
         add_text(image, "link", absolute_url("index", config))
         ET.SubElement(channel, f"{{{ITUNES_NS}}}image", {"href": config.image_url})
 
@@ -250,7 +290,7 @@ def build_feed_xml(config: FeedConfig, episodes: list[Episode]) -> bytes:
         if episode.album:
             add_text(item, f"{{{ITUNES_NS}}}subtitle", episode.album)
 
-        audio_url = absolute_url("audio", config, episode_id=episode.id)
+        audio_url = absolute_url("audio", config, podcast_id=podcast.id, episode_id=episode.id)
         add_text(item, "guid", audio_url, {"isPermaLink": "true"})
         add_text(item, "pubDate", format_datetime(episode.pubdate))
         ET.SubElement(
@@ -271,7 +311,7 @@ def add_text(parent: ET.Element, tag: str, text: str, attrs: dict[str, str] | No
     child.text = text
 
 
-def absolute_url(endpoint: str, config: FeedConfig, **values: str) -> str:
+def absolute_url(endpoint: str, config: AppConfig, **values: str) -> str:
     if config.base_url:
         path = url_for(endpoint, **values)
         return f"{config.base_url.rstrip('/')}{path}"
@@ -281,6 +321,12 @@ def absolute_url(endpoint: str, config: FeedConfig, **values: str) -> str:
 def episode_id(path: Path) -> str:
     digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
     return digest[:20]
+
+
+def podcast_id(path: Path) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", path.name.lower()).strip("-") or "podcast"
+    digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:8]
+    return f"{slug}-{digest}"
 
 
 def escape_html(text: str) -> str:
@@ -302,7 +348,7 @@ def main() -> None:
     args = parser.parse_args()
 
     app = create_app(args.config)
-    config: FeedConfig = app.config["PODCAST_CONFIG"]
+    config: AppConfig = app.config["PODCAST_CONFIG"]
     app.run(host=config.host, port=config.port)
 
 
