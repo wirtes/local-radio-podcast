@@ -1,0 +1,20 @@
+[server]
+# Use your computer's LAN address here so Apple Podcasts can reach it.
+# Example: "http://192.168.1.25:8000"
+base_url = "http://YOUR_LAN_IP:8000"
+host = "0.0.0.0"
+port = 8000
+
+[feed]
+title = "Local MP3 Podcast"
+description = "A private podcast feed from local MP3 files."
+author = "Your Name"
+language = "en-us"
+explicit = "false"
+category = "Music"
+# image_url = "http://YOUR_LAN_IP:8000/static/cover.jpg"
+
+directories = [
+  "/Users/you/Music/Podcast Folder One",
+  "/Users/you/Music/Podcast Folder Two",
+]
