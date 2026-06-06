@@ -15,6 +15,7 @@ category = "Music"
 # image_url = "http://YOUR_LAN_IP:8000/static/cover.jpg"
 
 # Each immediate directory inside this root becomes its own podcast feed.
+# The first .jpg file in each podcast directory's top level becomes that podcast's cover image.
 # For example:
 #   /Users/you/Music/Local Podcasts/Show One
 #   /Users/you/Music/Local Podcasts/Show Two

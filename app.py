@@ -46,6 +46,7 @@ class Podcast:
     path: Path
     title: str
     description: str
+    image_path: Path | None
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,19 @@ def create_app(config_path: str | Path | None = None) -> Flask:
             download_name=episode.path.name,
         )
 
+    @app.get("/podcasts/<podcast_id>/cover.jpg")
+    def cover(podcast_id: str):
+        podcast = find_podcast(config, podcast_id)
+        if podcast is None or podcast.image_path is None:
+            abort(404)
+        return send_file(
+            podcast.image_path,
+            mimetype="image/jpeg",
+            as_attachment=False,
+            conditional=True,
+            download_name=podcast.image_path.name,
+        )
+
     return app
 
 
@@ -170,6 +184,7 @@ def scan_podcasts(config: AppConfig) -> list[Podcast]:
             path=path,
             title=path.name,
             description=f"{config.description} ({path.name})",
+            image_path=find_podcast_image(path),
         )
         for path in sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
         if path.is_dir()
@@ -182,6 +197,15 @@ def find_podcast(config: AppConfig, podcast_id: str) -> Podcast | None:
         if podcast.id == podcast_id:
             return podcast
     return None
+
+
+def find_podcast_image(podcast_path: Path) -> Path | None:
+    jpgs = [
+        path
+        for path in sorted(podcast_path.iterdir(), key=lambda item: item.name.lower())
+        if path.is_file() and path.suffix.lower() == ".jpg"
+    ]
+    return jpgs[0] if jpgs else None
 
 
 def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
@@ -271,12 +295,13 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
         },
     )
 
-    if config.image_url:
+    image_url = podcast_image_url(config, podcast)
+    if image_url:
         image = ET.SubElement(channel, "image")
-        add_text(image, "url", config.image_url)
+        add_text(image, "url", image_url)
         add_text(image, "title", podcast.title)
         add_text(image, "link", absolute_url("index", config))
-        ET.SubElement(channel, f"{{{ITUNES_NS}}}image", {"href": config.image_url})
+        ET.SubElement(channel, f"{{{ITUNES_NS}}}image", {"href": image_url})
 
     for episode in episodes:
         item = ET.SubElement(channel, "item")
@@ -316,6 +341,12 @@ def absolute_url(endpoint: str, config: AppConfig, **values: str) -> str:
         path = url_for(endpoint, **values)
         return f"{config.base_url.rstrip('/')}{path}"
     return url_for(endpoint, _external=True, **values)
+
+
+def podcast_image_url(config: AppConfig, podcast: Podcast) -> str | None:
+    if podcast.image_path:
+        return absolute_url("cover", config, podcast_id=podcast.id)
+    return config.image_url
 
 
 def episode_id(path: Path) -> str:

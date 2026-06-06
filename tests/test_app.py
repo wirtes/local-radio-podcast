@@ -36,6 +36,12 @@ class PodcastServerTest(unittest.TestCase):
             other_dir.mkdir()
             mp3 = audio_dir / "episode.mp3"
             mp3.write_bytes(b"not a real mp3, but enough for send_file")
+            cover = audio_dir / "01-cover.jpg"
+            cover.write_bytes(b"first cover")
+            (audio_dir / "z-cover.jpg").write_bytes(b"second cover")
+            nested_dir = audio_dir / "nested"
+            nested_dir.mkdir()
+            (nested_dir / "00-nested.jpg").write_bytes(b"not the show cover")
             (other_dir / "briefing.mp3").write_bytes(b"another fake mp3")
 
             config = root / "config.toml"
@@ -69,6 +75,15 @@ root_directory = "{library_dir}"
                 self.assertEqual(feed_response.status_code, 200)
 
                 rss = ET.fromstring(feed_response.data)
+                channel = rss.find("./channel")
+                self.assertIsNotNone(channel)
+                image = channel.find("image")
+                self.assertIsNotNone(image)
+                self.assertTrue(image.findtext("url").endswith("/cover.jpg"))
+                itunes_image = channel.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
+                self.assertIsNotNone(itunes_image)
+                self.assertTrue(itunes_image.attrib["href"].endswith("/cover.jpg"))
+
                 item = rss.find("./channel/item")
                 self.assertIsNotNone(item)
                 self.assertEqual(item.findtext("title"), "The First Track")
@@ -82,6 +97,12 @@ root_directory = "{library_dir}"
                 self.assertEqual(audio_response.status_code, 200)
                 self.assertEqual(audio_response.data, mp3.read_bytes())
                 audio_response.close()
+
+                cover_path = image.findtext("url").replace("http://127.0.0.1:8000", "")
+                cover_response = client.get(cover_path)
+                self.assertEqual(cover_response.status_code, 200)
+                self.assertEqual(cover_response.data, cover.read_bytes())
+                cover_response.close()
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

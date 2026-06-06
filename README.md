@@ -22,8 +22,10 @@ Every immediate directory inside `feed.root_directory` becomes a separate podcas
 ```text
 /Users/you/Music/Local Podcasts/
   Morning Show/
+    cover.jpg
     episode-1.mp3
   Interviews/
+    artwork.jpg
     guest-a.mp3
 ```
 
@@ -65,6 +67,7 @@ The homepage lists the feed URL for each podcast folder.
 
 - Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
 - Each podcast recursively scans its own directory for `.mp3` files.
+- The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - RSS items are sorted newest-first by ID3 date metadata when available, otherwise by file modification time.
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
 - MP3 files are served only when they were found inside the requested podcast directory.
