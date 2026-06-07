@@ -72,6 +72,29 @@ class Episode:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+@dataclass(frozen=True)
+class TagTarget:
+    frame_id: str
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class TagDiff:
+    frame_id: str
+    label: str
+    current: str | None
+    target: str
+
+    @property
+    def status(self) -> str:
+        if self.current is None:
+            return "ADD"
+        if self.current != self.target:
+            return "CHANGE"
+        return "OK"
+
+
 def load_config(path: Path) -> AppConfig:
     if not path.exists():
         raise FileNotFoundError(
@@ -369,27 +392,98 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
 
-def repair_mp3_tags(config: AppConfig, write: bool) -> list[str]:
+def repair_mp3_tags(config: AppConfig, write: bool, podcast_filter: str | None = None) -> list[str]:
     results: list[str] = []
-    for podcast in scan_podcasts(config):
+    podcasts = filter_podcasts(scan_podcasts(config), podcast_filter)
+    if podcast_filter and not podcasts:
+        return [f"No podcast matched: {podcast_filter}"]
+
+    for podcast in podcasts:
         for path in find_mp3_files(podcast.path):
             filename_metadata = read_filename_metadata(path)
             if not filename_metadata.get("date"):
                 results.append(f"SKIP no filename date: {path}")
                 continue
 
-            title = filename_metadata["title"]
-            date = filename_metadata["date"]
-            album = path.parent.name if path.parent != podcast.path else podcast.title
-            artist = podcast.title
-            results.append(f"{'WRITE' if write else 'DRY'} {title} -> {path}")
+            targets = build_tag_targets(podcast, path, filename_metadata)
+            diffs = diff_id3_tags(path, targets)
+            results.append(f"{'WRITE' if write else 'DRY'} {path}")
+            for diff in diffs:
+                if diff.status == "ADD":
+                    results.append(f"  ADD    {diff.label} ({diff.frame_id}): {diff.target}")
+                elif diff.status == "CHANGE":
+                    results.append(
+                        f"  CHANGE {diff.label} ({diff.frame_id}): {diff.current} -> {diff.target}"
+                    )
+                else:
+                    results.append(f"  OK     {diff.label} ({diff.frame_id}): {diff.target}")
 
             if write:
-                write_id3_tags(path, title=title, artist=artist, album=album, date=date)
+                write_id3_tags(path, targets)
     return results
 
 
-def write_id3_tags(path: Path, title: str, artist: str, album: str, date: str) -> None:
+def filter_podcasts(podcasts: list[Podcast], podcast_filter: str | None) -> list[Podcast]:
+    if not podcast_filter:
+        return podcasts
+
+    normalized_filter = normalize_podcast_filter(podcast_filter)
+    return [
+        podcast
+        for podcast in podcasts
+        if podcast.id == podcast_filter
+        or podcast.title == podcast_filter
+        or normalize_podcast_filter(podcast.title) == normalized_filter
+    ]
+
+
+def normalize_podcast_filter(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def build_tag_targets(podcast: Podcast, path: Path, filename_metadata: dict[str, str]) -> list[TagTarget]:
+    title = filename_metadata["title"]
+    date = filename_metadata["date"]
+    album = path.parent.name if path.parent != podcast.path else podcast.title
+    artist = podcast.title
+    return [
+        TagTarget("TIT2", "Title", title),
+        TagTarget("TPE1", "Artist", artist),
+        TagTarget("TALB", "Album", album),
+        TagTarget("TDRC", "Date", date),
+        TagTarget("COMM", "Comment", title),
+    ]
+
+
+def diff_id3_tags(path: Path, targets: list[TagTarget]) -> list[TagDiff]:
+    try:
+        tags = ID3(path)
+    except ID3NoHeaderError:
+        tags = ID3()
+
+    return [
+        TagDiff(
+            frame_id=target.frame_id,
+            label=target.label,
+            current=read_id3_value(tags, target.frame_id),
+            target=target.value,
+        )
+        for target in targets
+    ]
+
+
+def read_id3_value(tags: ID3, frame_id: str) -> str | None:
+    if frame_id == "COMM":
+        comments = tags.getall("COMM")
+        return str(comments[0].text[0]) if comments and comments[0].text else None
+
+    frame = tags.get(frame_id)
+    if frame is None or not getattr(frame, "text", None):
+        return None
+    return str(frame.text[0])
+
+
+def write_id3_tags(path: Path, targets: list[TagTarget]) -> None:
     try:
         tags = ID3(path)
     except ID3NoHeaderError:
@@ -400,11 +494,13 @@ def write_id3_tags(path: Path, title: str, artist: str, album: str, date: str) -
     tags.delall("TALB")
     tags.delall("TDRC")
     tags.delall("COMM")
-    tags.add(TIT2(encoding=3, text=title))
-    tags.add(TPE1(encoding=3, text=artist))
-    tags.add(TALB(encoding=3, text=album))
-    tags.add(TDRC(encoding=3, text=date))
-    tags.add(COMM(encoding=3, lang="eng", desc="", text=title))
+
+    target_map = {target.frame_id: target.value for target in targets}
+    tags.add(TIT2(encoding=3, text=target_map["TIT2"]))
+    tags.add(TPE1(encoding=3, text=target_map["TPE1"]))
+    tags.add(TALB(encoding=3, text=target_map["TALB"]))
+    tags.add(TDRC(encoding=3, text=target_map["TDRC"]))
+    tags.add(COMM(encoding=3, lang="eng", desc="", text=target_map["COMM"]))
     tags.save(path)
 
 
@@ -469,11 +565,15 @@ def main() -> None:
         action="store_true",
         help="Actually modify MP3 files when using repair-tags. Without this, repair-tags is a dry run.",
     )
+    parser.add_argument(
+        "--podcast",
+        help="Only repair one podcast, matched by exact title, slug title, or podcast ID.",
+    )
     args = parser.parse_args()
 
     if args.command == "repair-tags":
         config = load_config(Path(args.config).resolve())
-        for line in repair_mp3_tags(config, write=args.write):
+        for line in repair_mp3_tags(config, write=args.write, podcast_filter=args.podcast):
             print(line)
         if not args.write:
             print("Dry run only. Re-run with --write to update MP3 ID3 tags.")

@@ -7,9 +7,18 @@ from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1
 
-from app import create_app, write_id3_tags
+from app import (
+    Podcast,
+    TagTarget,
+    build_tag_targets,
+    create_app,
+    diff_id3_tags,
+    load_config,
+    repair_mp3_tags,
+    write_id3_tags,
+)
 
 
 class FakeInfo:
@@ -278,20 +287,196 @@ root_directory = "{library_dir}"
         with tempfile.TemporaryDirectory() as temp_dir:
             mp3 = Path(temp_dir) / "2026-03-11 Modern Jetset.mp3"
             mp3.write_bytes(b"audio")
+            targets = [
+                TagTarget("TIT2", "Title", "2026-03-11 Modern Jetset"),
+                TagTarget("TPE1", "Artist", "Modern Jetset"),
+                TagTarget("TALB", "Album", "Modern Jetset 2026"),
+                TagTarget("TDRC", "Date", "2026-03-11"),
+                TagTarget("COMM", "Comment", "2026-03-11 Modern Jetset"),
+            ]
 
-            write_id3_tags(
-                mp3,
-                title="2026-03-11 Modern Jetset",
-                artist="Modern Jetset",
-                album="Modern Jetset 2026",
-                date="2026-03-11",
-            )
+            write_id3_tags(mp3, targets)
 
             tags = ID3(mp3)
             self.assertEqual(tags["TIT2"].text[0], "2026-03-11 Modern Jetset")
             self.assertEqual(tags["TPE1"].text[0], "Modern Jetset")
             self.assertEqual(tags["TALB"].text[0], "Modern Jetset 2026")
             self.assertEqual(str(tags["TDRC"].text[0]), "2026-03-11")
+
+    def test_diff_id3_tags_reports_added_and_changed_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            podcast_dir = root / "Modern Jetset"
+            year_dir = podcast_dir / "Modern Jetset 2026"
+            year_dir.mkdir(parents=True)
+            mp3 = year_dir / "2026-03-11 Modern Jetset.mp3"
+            mp3.write_bytes(b"audio")
+            podcast = Podcast(
+                id="modern-jetset",
+                path=podcast_dir,
+                title="Modern Jetset",
+                description="desc",
+                image_path=None,
+            )
+            targets = build_tag_targets(
+                podcast,
+                mp3,
+                {"title": "2026-03-11 Modern Jetset", "date": "2026-03-11"},
+            )
+
+            add_diffs = diff_id3_tags(mp3, targets)
+            self.assertEqual([diff.status for diff in add_diffs], ["ADD", "ADD", "ADD", "ADD", "ADD"])
+
+            tags = ID3()
+            tags.add(TIT2(encoding=3, text="2026-06-06 Singing to the Same Sky"))
+            tags.add(TPE1(encoding=3, text="Modern Jetset"))
+            tags.add(TALB(encoding=3, text="Modern Jetset 2025"))
+            tags.add(TDRC(encoding=3, text="2026-06-06"))
+            tags.save(mp3)
+
+            change_diffs = diff_id3_tags(mp3, targets)
+            by_frame = {diff.frame_id: diff for diff in change_diffs}
+            self.assertEqual(by_frame["TIT2"].status, "CHANGE")
+            self.assertEqual(by_frame["TIT2"].current, "2026-06-06 Singing to the Same Sky")
+            self.assertEqual(by_frame["TIT2"].target, "2026-03-11 Modern Jetset")
+            self.assertEqual(by_frame["TPE1"].status, "OK")
+            self.assertEqual(by_frame["TALB"].status, "CHANGE")
+            self.assertEqual(by_frame["TDRC"].status, "CHANGE")
+            self.assertEqual(by_frame["COMM"].status, "ADD")
+
+    def test_repair_mp3_tags_output_shows_add_change_and_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Modern Jetset"
+            year_dir = podcast_dir / "Modern Jetset 2026"
+            year_dir.mkdir(parents=True)
+            mp3 = year_dir / "2026-03-11 Modern Jetset.mp3"
+            mp3.write_bytes(b"audio")
+            tags = ID3()
+            tags.add(TIT2(encoding=3, text="2026-06-06 Singing to the Same Sky"))
+            tags.add(TPE1(encoding=3, text="Modern Jetset"))
+            tags.save(mp3)
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            output = "\n".join(repair_mp3_tags(load_config(config), write=False))
+            self.assertIn("DRY", output)
+            self.assertIn("CHANGE Title (TIT2): 2026-06-06 Singing to the Same Sky -> 2026-03-11 Modern Jetset", output)
+            self.assertIn("OK     Artist (TPE1): Modern Jetset", output)
+            self.assertIn("ADD    Album (TALB): Modern Jetset 2026", output)
+            self.assertIn("ADD    Date (TDRC): 2026-03-11", output)
+            self.assertIn("ADD    Comment (COMM): 2026-03-11 Modern Jetset", output)
+
+    def test_repair_mp3_tags_can_target_single_podcast(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            modern_dir = library_dir / "Modern Jetset"
+            sky_dir = library_dir / "Singing to the Same Sky"
+            modern_dir.mkdir(parents=True)
+            sky_dir.mkdir()
+            (modern_dir / "2026-03-11 Modern Jetset.mp3").write_bytes(b"audio")
+            (sky_dir / "2026-06-06 Singing to the Same Sky.mp3").write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            output = "\n".join(
+                repair_mp3_tags(load_config(config), write=False, podcast_filter="modern-jetset")
+            )
+            self.assertIn("Modern Jetset.mp3", output)
+            self.assertNotIn("Singing to the Same Sky.mp3", output)
+
+    def test_repair_mp3_tags_skips_non_matching_filename_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Modern Jetset"
+            podcast_dir.mkdir(parents=True)
+            mp3 = podcast_dir / "Modern Jetset without a date.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            output = "\n".join(repair_mp3_tags(load_config(config), write=True))
+            self.assertIn("SKIP no filename date", output)
+            with self.assertRaises(Exception):
+                ID3(mp3)
+
+    def test_repair_mp3_tags_reports_no_matching_podcast(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Modern Jetset"
+            podcast_dir.mkdir(parents=True)
+            (podcast_dir / "2026-03-11 Modern Jetset.mp3").write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                repair_mp3_tags(load_config(config), write=False, podcast_filter="missing"),
+                ["No podcast matched: missing"],
+            )
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

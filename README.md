@@ -79,11 +79,37 @@ Preview the changes:
 .venv/bin/python app.py repair-tags --config config.toml
 ```
 
+Preview one podcast only, using either the podcast title, slug, or full podcast ID:
+
+```sh
+.venv/bin/python app.py repair-tags --config config.toml --podcast "Modern Jetset"
+.venv/bin/python app.py repair-tags --config config.toml --podcast modern-jetset
+```
+
+The preview reports each tag as `ADD`, `CHANGE`, or `OK`:
+
+```text
+DRY /path/to/Modern Jetset 2026/2026-03-04 Modern Jetset.mp3
+  CHANGE Title (TIT2): old title -> 2026-03-04 Modern Jetset
+  OK     Artist (TPE1): Modern Jetset
+  ADD    Album (TALB): Modern Jetset 2026
+  ADD    Date (TDRC): 2026-03-04
+  ADD    Comment (COMM): 2026-03-04 Modern Jetset
+```
+
 Write the tags:
 
 ```sh
 .venv/bin/python app.py repair-tags --config config.toml --write
 ```
+
+Write tags for one podcast only:
+
+```sh
+.venv/bin/python app.py repair-tags --config config.toml --podcast "Modern Jetset" --write
+```
+
+Files that do not start with `YYYY-MM-DD` are reported as `SKIP no filename date` and are not modified, even when `--write` is used.
 
 For files named like `2026-03-04 Modern Jetset.mp3`, this writes:
 
