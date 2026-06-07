@@ -121,6 +121,7 @@ For files named like `2026-03-04 Modern Jetset.mp3`, this writes:
 
 Tags are saved as ID3v2.3 for better compatibility with older iPods.
 After tags are written, the feed's MP3 enclosure URLs include an updated file-version query string so podcast clients are encouraged to download the repaired file instead of reusing a cached copy.
+Feed enclosure URLs also end with a readable episode filename, such as `2026-03-04-Modern-Jetset.mp3`, for better compatibility with older iPod/iTunes import paths.
 
 ## Run on Debian Startup
 

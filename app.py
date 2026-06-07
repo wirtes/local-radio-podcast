@@ -173,19 +173,11 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     @app.get("/podcasts/<podcast_id>/audio/<episode_id>.mp3")
     def audio(podcast_id: str, episode_id: str):
-        podcast = find_podcast(config, podcast_id)
-        if podcast is None:
-            abort(404)
-        episode = find_episode(config, podcast, episode_id)
-        if episode is None:
-            abort(404)
-        return send_file(
-            episode.path,
-            mimetype="audio/mpeg",
-            as_attachment=False,
-            conditional=True,
-            download_name=episode.path.name,
-        )
+        return send_episode_audio(config, podcast_id, episode_id)
+
+    @app.get("/podcasts/<podcast_id>/audio/<episode_id>/<download_name>")
+    def audio_named(podcast_id: str, episode_id: str, download_name: str):
+        return send_episode_audio(config, podcast_id, episode_id)
 
     @app.get("/podcasts/<podcast_id>/cover.jpg")
     def cover(podcast_id: str):
@@ -201,6 +193,22 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         )
 
     return app
+
+
+def send_episode_audio(config: AppConfig, podcast_id: str, episode_id: str):
+    podcast = find_podcast(config, podcast_id)
+    if podcast is None:
+        abort(404)
+    episode = find_episode(config, podcast, episode_id)
+    if episode is None:
+        abort(404)
+    return send_file(
+        episode.path,
+        mimetype="audio/mpeg",
+        as_attachment=False,
+        conditional=True,
+        download_name=episode_download_name(episode),
+    )
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:
@@ -378,10 +386,11 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
             add_text(item, f"{{{ITUNES_NS}}}subtitle", episode.album)
 
         audio_url = absolute_url(
-            "audio",
+            "audio_named",
             config,
             podcast_id=podcast.id,
             episode_id=episode.id,
+            download_name=episode_download_name(episode),
             v=str(episode.modified_ns),
         )
         add_text(item, "link", audio_url)
@@ -546,6 +555,13 @@ def episode_id(path: Path) -> str:
 
 def episode_guid(podcast: Podcast, episode: Episode) -> str:
     return f"local-radio-podcast:{podcast.id}:{episode.id}"
+
+
+def episode_download_name(episode: Episode) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", episode.title).strip("-") or episode.id
+    if not stem.lower().endswith(".mp3"):
+        stem = f"{stem}.mp3"
+    return stem
 
 
 def podcast_id(path: Path) -> str:
