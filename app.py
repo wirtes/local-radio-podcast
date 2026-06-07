@@ -62,6 +62,7 @@ class Episode:
     duration_seconds: int | None
     pubdate: datetime
     size: int
+    modified_ns: int
 
     @property
     def duration_text(self) -> str | None:
@@ -286,6 +287,7 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
         duration_seconds=duration_seconds,
         pubdate=pubdate,
         size=stat.st_size,
+        modified_ns=stat.st_mtime_ns,
     )
 
 
@@ -375,7 +377,13 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
         if episode.album:
             add_text(item, f"{{{ITUNES_NS}}}subtitle", episode.album)
 
-        audio_url = absolute_url("audio", config, podcast_id=podcast.id, episode_id=episode.id)
+        audio_url = absolute_url(
+            "audio",
+            config,
+            podcast_id=podcast.id,
+            episode_id=episode.id,
+            v=str(episode.modified_ns),
+        )
         add_text(item, "link", audio_url)
         add_text(item, "guid", episode_guid(podcast, episode), {"isPermaLink": "false"})
         add_text(item, "pubDate", format_datetime(episode.pubdate))

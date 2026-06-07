@@ -139,6 +139,7 @@ root_directory = "{library_dir}"
                 enclosure = item.find("enclosure")
                 self.assertIsNotNone(enclosure)
                 self.assertEqual(enclosure.attrib["type"], "audio/mpeg")
+                self.assertIn("?v=", enclosure.attrib["url"])
                 self.assertEqual(item.findtext("link"), enclosure.attrib["url"])
                 guid = item.find("guid")
                 self.assertIsNotNone(guid)
