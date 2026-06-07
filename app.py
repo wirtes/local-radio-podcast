@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -385,14 +386,7 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
         if episode.album:
             add_text(item, f"{{{ITUNES_NS}}}subtitle", episode.album)
 
-        audio_url = absolute_url(
-            "audio_named",
-            config,
-            podcast_id=podcast.id,
-            episode_id=episode.id,
-            download_name=episode_download_name(episode),
-            v=str(episode.modified_ns),
-        )
+        audio_url = episode_audio_url(config, podcast, episode)
         add_text(item, "link", audio_url)
         add_text(item, "guid", episode_guid(podcast, episode), {"isPermaLink": "false"})
         add_text(item, "pubDate", format_datetime(episode.pubdate))
@@ -407,6 +401,86 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
         )
 
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
+
+
+def episode_audio_url(config: AppConfig, podcast: Podcast, episode: Episode) -> str:
+    return absolute_url(
+        "audio_named",
+        config,
+        podcast_id=podcast.id,
+        episode_id=episode.id,
+        download_name=episode_download_name(episode),
+        v=str(episode.modified_ns),
+    )
+
+
+def diagnose_podcast(config: AppConfig, podcast_filter: str | None, limit: int = 10) -> list[str]:
+    if not podcast_filter:
+        lines = ["Specify --podcast to diagnose one show. Available podcasts:"]
+        lines.extend(f"  {podcast.title} ({podcast.id})" for podcast in scan_podcasts(config))
+        return lines
+
+    podcasts = filter_podcasts(scan_podcasts(config), podcast_filter)
+    if not podcasts:
+        return [f"No podcast matched: {podcast_filter}"]
+
+    lines: list[str] = []
+    for podcast in podcasts:
+        episodes = scan_episodes(config, podcast)
+        lines.extend(
+            [
+                f"Podcast: {podcast.title}",
+                f"ID: {podcast.id}",
+                f"Path: {podcast.path}",
+                f"Episodes: {len(episodes)}",
+            ]
+        )
+        lines.extend(report_duplicates("feed titles", [episode.title for episode in episodes]))
+        lines.extend(report_duplicates("feed GUIDs", [episode_guid(podcast, episode) for episode in episodes]))
+        lines.extend(
+            report_duplicates(
+                "enclosure URLs",
+                [episode_audio_url(config, podcast, episode) for episode in episodes],
+            )
+        )
+
+        for episode in episodes[:limit]:
+            lines.extend(
+                [
+                    "",
+                    f"Episode: {episode.title}",
+                    f"  File: {episode.path}",
+                    f"  PubDate: {format_datetime(episode.pubdate)}",
+                    f"  GUID: {episode_guid(podcast, episode)}",
+                    f"  URL: {episode_audio_url(config, podcast, episode)}",
+                ]
+            )
+            filename_metadata = read_filename_metadata(episode.path)
+            if not filename_metadata.get("date"):
+                lines.append("  Filename date: MISSING - repair-tags would skip this file")
+                continue
+
+            lines.append(f"  Filename date: {filename_metadata['date']}")
+            targets = build_tag_targets(podcast, episode.path, filename_metadata)
+            for diff in diff_id3_tags(episode.path, targets):
+                if diff.status == "CHANGE":
+                    lines.append(
+                        f"  TAG CHANGE {diff.label} ({diff.frame_id}): {diff.current} -> {diff.target}"
+                    )
+                elif diff.status == "ADD":
+                    lines.append(f"  TAG ADD    {diff.label} ({diff.frame_id}): {diff.target}")
+                else:
+                    lines.append(f"  TAG OK     {diff.label} ({diff.frame_id}): {diff.target}")
+    return lines
+
+
+def report_duplicates(label: str, values: list[str]) -> list[str]:
+    duplicates = [(value, count) for value, count in Counter(values).items() if count > 1]
+    if not duplicates:
+        return [f"{label}: no duplicates"]
+    lines = [f"{label}: {len(duplicates)} duplicate value(s)"]
+    lines.extend(f"  {count}x {value}" for value, count in duplicates)
+    return lines
 
 
 def repair_mp3_tags(config: AppConfig, write: bool, podcast_filter: str | None = None) -> list[str]:
@@ -584,9 +658,9 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("serve", "repair-tags"),
+        choices=("serve", "repair-tags", "diagnose"),
         default="serve",
-        help="Use repair-tags to write filename-derived ID3 tags to MP3 files.",
+        help="Use repair-tags to write ID3 tags, or diagnose to inspect one podcast.",
     )
     parser.add_argument(
         "--config",
@@ -602,6 +676,12 @@ def main() -> None:
         "--podcast",
         help="Only repair one podcast, matched by exact title, slug title, or podcast ID.",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of episodes to show with diagnose. Defaults to 10.",
+    )
     args = parser.parse_args()
 
     if args.command == "repair-tags":
@@ -610,6 +690,14 @@ def main() -> None:
             print(line)
         if not args.write:
             print("Dry run only. Re-run with --write to update MP3 ID3 tags.")
+        return
+
+    if args.command == "diagnose":
+        app = create_app(args.config)
+        with app.test_request_context():
+            config: AppConfig = app.config["PODCAST_CONFIG"]
+            for line in diagnose_podcast(config, podcast_filter=args.podcast, limit=args.limit):
+                print(line)
         return
 
     app = create_app(args.config)

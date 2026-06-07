@@ -14,6 +14,7 @@ from app import (
     TagTarget,
     build_tag_targets,
     create_app,
+    diagnose_podcast,
     diff_id3_tags,
     load_config,
     repair_mp3_tags,
@@ -489,6 +490,49 @@ root_directory = "{library_dir}"
                 repair_mp3_tags(load_config(config), write=False, podcast_filter="missing"),
                 ["No podcast matched: missing"],
             )
+
+    def test_diagnose_podcast_reports_feed_identity_and_tag_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Gracyn Your Eardrums"
+            podcast_dir.mkdir(parents=True)
+            mp3 = podcast_dir / "2026-06-01 Gracyn Your Eardrums.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                with flask_app.test_request_context():
+                    output = "\n".join(
+                        diagnose_podcast(
+                            flask_app.config["PODCAST_CONFIG"],
+                            podcast_filter="gracyn-your-eardrums",
+                            limit=1,
+                        )
+                    )
+            self.assertIn("Podcast: Gracyn Your Eardrums", output)
+            self.assertIn("feed titles: no duplicates", output)
+            self.assertIn("feed GUIDs: no duplicates", output)
+            self.assertIn("enclosure URLs: no duplicates", output)
+            self.assertIn("Episode: 2026-06-01 Gracyn Your Eardrums", output)
+            self.assertIn("TAG ADD    Title (TIT2): 2026-06-01 Gracyn Your Eardrums", output)
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

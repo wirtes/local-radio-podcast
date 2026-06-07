@@ -68,10 +68,34 @@ The homepage lists the feed URL for each podcast folder.
 For Apple Podcasts and iPod syncing, subscribe to the specific podcast feed URL, not the homepage URL.
 Each episode includes a stable non-permalink GUID, an item link, and an MP3 enclosure URL for better compatibility with older sync paths.
 
+## Fix Podcast Covers
+
+If podcast folders do not already have cover images, extract embedded MP3 artwork into each podcast root:
+
+```sh
+./podcast-cover-fixer.sh
+```
+
+The script reads `config.toml`, scans each immediate podcast directory under `feed.root_directory`, and writes:
+
+```text
+artist.jpg
+```
+
+It skips any podcast directory that already has a top-level `.jpg` file. It searches MP3s recursively, so artwork inside year subdirectories is fine.
+
 ## Repair MP3 Tags
 
 Apple Podcasts may display the RSS feed correctly while iPod sync still reads stale embedded MP3 tags.
 If sync shows repeated or wrong episode names, write filename-derived ID3 tags into the files.
+
+Diagnose one podcast before changing files:
+
+```sh
+.venv/bin/python app.py diagnose --config config.toml --podcast "Gracyn Your Eardrums" --limit 3
+```
+
+This reports duplicate feed titles, GUIDs, enclosure URLs, and the current-vs-target ID3 tag status for the first few episodes.
 
 Preview the changes:
 
