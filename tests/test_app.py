@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
-from app import create_app
+from mutagen.id3 import ID3
+
+from app import create_app, write_id3_tags
 
 
 class FakeInfo:
@@ -40,6 +42,16 @@ class FakeAudioWithFilenameTitle:
         "artist": ["Station Host"],
         "date": ["2001-01-01"],
         "comment": ["2026-03-11 Modern Jetset"],
+    }
+
+
+class FakeAudioWithStaleTitle:
+    info = FakeInfo()
+    tags = {
+        "title": ["2026-06-06 Singing to the Same Sky"],
+        "artist": ["Station Host"],
+        "date": ["2026-06-06"],
+        "comment": ["2026-06-06 Singing to the Same Sky"],
     }
 
 
@@ -222,6 +234,64 @@ root_directory = "{library_dir}"
                 self.assertIsNotNone(item)
                 self.assertEqual(item.findtext("title"), "2026-03-11 Modern Jetset")
                 self.assertEqual(item.findtext("description"), "2026-03-11 Modern Jetset")
+
+    def test_filename_title_wins_over_stale_mp3_title(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            audio_dir = library_dir / "Radio Rips"
+            audio_dir.mkdir(parents=True)
+            mp3 = audio_dir / "2026-03-11 Modern Jetset.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithStaleTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                feed_path = self._first_link_for(index_response.data.decode(), "Radio Rips")
+
+                feed_response = client.get(feed_path)
+                rss = ET.fromstring(feed_response.data)
+                item = rss.find("./channel/item")
+                self.assertIsNotNone(item)
+                self.assertEqual(item.findtext("title"), "2026-03-11 Modern Jetset")
+                self.assertEqual(item.findtext("description"), "2026-03-11 Modern Jetset")
+
+    def test_write_id3_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mp3 = Path(temp_dir) / "2026-03-11 Modern Jetset.mp3"
+            mp3.write_bytes(b"audio")
+
+            write_id3_tags(
+                mp3,
+                title="2026-03-11 Modern Jetset",
+                artist="Modern Jetset",
+                album="Modern Jetset 2026",
+                date="2026-03-11",
+            )
+
+            tags = ID3(mp3)
+            self.assertEqual(tags["TIT2"].text[0], "2026-03-11 Modern Jetset")
+            self.assertEqual(tags["TPE1"].text[0], "Modern Jetset")
+            self.assertEqual(tags["TALB"].text[0], "Modern Jetset 2026")
+            self.assertEqual(str(tags["TDRC"].text[0]), "2026-03-11")
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

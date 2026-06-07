@@ -68,6 +68,30 @@ The homepage lists the feed URL for each podcast folder.
 For Apple Podcasts and iPod syncing, subscribe to the specific podcast feed URL, not the homepage URL.
 Each episode includes a stable non-permalink GUID, an item link, and an MP3 enclosure URL for better compatibility with older sync paths.
 
+## Repair MP3 Tags
+
+Apple Podcasts may display the RSS feed correctly while iPod sync still reads stale embedded MP3 tags.
+If sync shows repeated or wrong episode names, write filename-derived ID3 tags into the files.
+
+Preview the changes:
+
+```sh
+.venv/bin/python app.py repair-tags --config config.toml
+```
+
+Write the tags:
+
+```sh
+.venv/bin/python app.py repair-tags --config config.toml --write
+```
+
+For files named like `2026-03-04 Modern Jetset.mp3`, this writes:
+
+- Title: `2026-03-04 Modern Jetset`
+- Date: `2026-03-04`
+- Artist: the podcast folder name
+- Album: the immediate parent folder name, such as `Modern Jetset 2026`
+
 ## Run on Debian Startup
 
 These commands assume the code lives at:

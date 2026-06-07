@@ -14,6 +14,7 @@ from xml.etree import ElementTree as ET
 
 from flask import Flask, Response, abort, send_file, url_for
 from mutagen import File as MutagenFile
+from mutagen.id3 import COMM, ID3, TALB, TDRC, TIT2, TPE1, ID3NoHeaderError
 
 
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
@@ -246,11 +247,9 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
     if metadata_title == path.stem and filename_metadata.get("title"):
         metadata_title = None
 
-    title = metadata_title or filename_metadata.get("title") or path.stem
+    title = filename_metadata.get("title") or metadata_title or path.stem
     author = metadata.get("artist") or metadata.get("albumartist") or config.author
-    description = metadata.get("comment") or metadata.get("description") or title
-    if description == path.stem and filename_metadata.get("title"):
-        description = title
+    description = filename_metadata.get("title") or metadata.get("comment") or metadata.get("description") or title
     pubdate = parse_pubdate(filename_metadata.get("date") or metadata.get("date"), stat.st_mtime)
     duration_seconds = metadata.get("duration_seconds")
 
@@ -370,6 +369,45 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
 
+def repair_mp3_tags(config: AppConfig, write: bool) -> list[str]:
+    results: list[str] = []
+    for podcast in scan_podcasts(config):
+        for path in find_mp3_files(podcast.path):
+            filename_metadata = read_filename_metadata(path)
+            if not filename_metadata.get("date"):
+                results.append(f"SKIP no filename date: {path}")
+                continue
+
+            title = filename_metadata["title"]
+            date = filename_metadata["date"]
+            album = path.parent.name if path.parent != podcast.path else podcast.title
+            artist = podcast.title
+            results.append(f"{'WRITE' if write else 'DRY'} {title} -> {path}")
+
+            if write:
+                write_id3_tags(path, title=title, artist=artist, album=album, date=date)
+    return results
+
+
+def write_id3_tags(path: Path, title: str, artist: str, album: str, date: str) -> None:
+    try:
+        tags = ID3(path)
+    except ID3NoHeaderError:
+        tags = ID3()
+
+    tags.delall("TIT2")
+    tags.delall("TPE1")
+    tags.delall("TALB")
+    tags.delall("TDRC")
+    tags.delall("COMM")
+    tags.add(TIT2(encoding=3, text=title))
+    tags.add(TPE1(encoding=3, text=artist))
+    tags.add(TALB(encoding=3, text=album))
+    tags.add(TDRC(encoding=3, text=date))
+    tags.add(COMM(encoding=3, lang="eng", desc="", text=title))
+    tags.save(path)
+
+
 def add_text(parent: ET.Element, tag: str, text: str, attrs: dict[str, str] | None = None) -> None:
     child = ET.SubElement(parent, tag, attrs or {})
     child.text = text
@@ -415,11 +453,31 @@ def escape_html(text: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve local MP3 files as a private podcast feed.")
     parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("serve", "repair-tags"),
+        default="serve",
+        help="Use repair-tags to write filename-derived ID3 tags to MP3 files.",
+    )
+    parser.add_argument(
         "--config",
         default=os.environ.get("PODCAST_CONFIG", "config.toml"),
         help="Path to TOML config file. Defaults to config.toml or PODCAST_CONFIG.",
     )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Actually modify MP3 files when using repair-tags. Without this, repair-tags is a dry run.",
+    )
     args = parser.parse_args()
+
+    if args.command == "repair-tags":
+        config = load_config(Path(args.config).resolve())
+        for line in repair_mp3_tags(config, write=args.write):
+            print(line)
+        if not args.write:
+            print("Dry run only. Re-run with --write to update MP3 ID3 tags.")
+        return
 
     app = create_app(args.config)
     config: AppConfig = app.config["PODCAST_CONFIG"]
