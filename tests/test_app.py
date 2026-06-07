@@ -176,10 +176,10 @@ root_directory = "{library_dir}"
                 rss = ET.fromstring(feed_response.data)
                 items = rss.findall("./channel/item")
                 self.assertEqual(len(items), 2)
-                self.assertEqual(items[0].findtext("title"), "Modern Jetset")
+                self.assertEqual(items[0].findtext("title"), "2026-03-11 Modern Jetset")
                 self.assertEqual(
                     items[0].findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}title"),
-                    "Modern Jetset",
+                    "2026-03-11 Modern Jetset",
                 )
                 self.assertIn("11 Mar 2026", items[0].findtext("pubDate"))
                 self.assertIn("04 Mar 2026", items[1].findtext("pubDate"))
@@ -220,8 +220,8 @@ root_directory = "{library_dir}"
                 rss = ET.fromstring(feed_response.data)
                 item = rss.find("./channel/item")
                 self.assertIsNotNone(item)
-                self.assertEqual(item.findtext("title"), "Modern Jetset")
-                self.assertEqual(item.findtext("description"), "Modern Jetset")
+                self.assertEqual(item.findtext("title"), "2026-03-11 Modern Jetset")
+                self.assertEqual(item.findtext("description"), "2026-03-11 Modern Jetset")
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

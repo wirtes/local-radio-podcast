@@ -291,14 +291,12 @@ def read_filename_metadata(path: Path) -> dict[str, str]:
         return {}
 
     metadata = {"date": match.group("date")}
-    raw_title = match.group("title")
-    if raw_title:
-        metadata["title"] = clean_filename_title(raw_title)
+    metadata["title"] = clean_filename_title(path.stem)
     return metadata
 
 
 def clean_filename_title(title: str) -> str:
-    return re.sub(r"\s+", " ", title.replace("_", " ").replace("-", " ")).strip()
+    return re.sub(r"\s+", " ", title.replace("_", " ")).strip()
 
 
 def parse_pubdate(raw_date: str | None, fallback_mtime: float) -> datetime:

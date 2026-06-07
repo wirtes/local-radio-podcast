@@ -187,5 +187,5 @@ sudo ufw allow 8000/tcp
 - Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.
 - RSS items are sorted newest-first by filename date, then ID3 date metadata, then file modification time.
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
-- When MP3 title metadata is missing, the filename text after `YYYY-MM-DD` becomes the episode title.
+- When MP3 title metadata is missing or only repeats the filename, the filename becomes the episode title.
 - MP3 files are served only when they were found inside the requested podcast directory.
