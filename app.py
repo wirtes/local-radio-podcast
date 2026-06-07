@@ -19,6 +19,7 @@ from mutagen import File as MutagenFile
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ATOM_NS = "http://www.w3.org/2005/Atom"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+FILENAME_DATE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:\s+(?P<title>.+))?$")
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("atom", ATOM_NS)
@@ -234,10 +235,11 @@ def find_episode(config: AppConfig, podcast: Podcast, episode_id: str) -> Episod
 def read_episode(path: Path, config: AppConfig) -> Episode:
     stat = path.stat()
     metadata = read_audio_metadata(path)
-    title = metadata.get("title") or path.stem
+    filename_metadata = read_filename_metadata(path)
+    title = metadata.get("title") or filename_metadata.get("title") or path.stem
     author = metadata.get("artist") or metadata.get("albumartist") or config.author
     description = metadata.get("comment") or metadata.get("description") or title
-    pubdate = parse_pubdate(metadata.get("date"), stat.st_mtime)
+    pubdate = parse_pubdate(filename_metadata.get("date") or metadata.get("date"), stat.st_mtime)
     duration_seconds = metadata.get("duration_seconds")
 
     return Episode(
@@ -269,6 +271,22 @@ def read_audio_metadata(path: Path) -> dict[str, Any]:
         metadata["duration_seconds"] = round(float(audio.info.length))
 
     return metadata
+
+
+def read_filename_metadata(path: Path) -> dict[str, str]:
+    match = FILENAME_DATE_RE.match(path.stem)
+    if not match:
+        return {}
+
+    metadata = {"date": match.group("date")}
+    raw_title = match.group("title")
+    if raw_title:
+        metadata["title"] = clean_filename_title(raw_title)
+    return metadata
+
+
+def clean_filename_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title.replace("_", " ").replace("-", " ")).strip()
 
 
 def parse_pubdate(raw_date: str | None, fallback_mtime: float) -> datetime:

@@ -68,7 +68,7 @@ The homepage lists the feed URL for each podcast folder.
 These commands assume the code lives at:
 
 ```text
-/home/alw/code/local-radio-podcast
+/home/YOUR_USER/code/local-radio-podcast
 ```
 
 Install Python tooling:
@@ -81,7 +81,7 @@ sudo apt install -y python3 python3-venv python3-pip
 Set up the app:
 
 ```sh
-cd /home/alw/code/local-radio-podcast
+cd /home/YOUR_USER/code/local-radio-podcast
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp config.example.toml config.toml
@@ -108,7 +108,7 @@ root_directory = "/path/to/your/podcast/root"
 Test it manually:
 
 ```sh
-cd /home/alw/code/local-radio-podcast
+cd /home/YOUR_USER/code/local-radio-podcast
 .venv/bin/flask --app app run --host 0.0.0.0 --port 8000
 ```
 
@@ -136,10 +136,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=alw
-Group=alw
-WorkingDirectory=/home/alw/code/local-radio-podcast
-ExecStart=/home/alw/code/local-radio-podcast/.venv/bin/flask --app app run --host 0.0.0.0 --port 8000
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/code/local-radio-podcast
+ExecStart=/home/YOUR_USER/code/local-radio-podcast/.venv/bin/flask --app app run --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
 
@@ -179,6 +179,8 @@ sudo ufw allow 8000/tcp
 - Hidden folders, virtualenv/cache folders, and folders without any `.mp3` files are ignored.
 - Each podcast recursively scans its own directory for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
-- RSS items are sorted newest-first by ID3 date metadata when available, otherwise by file modification time.
+- Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.
+- RSS items are sorted newest-first by filename date, then ID3 date metadata, then file modification time.
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
+- When MP3 title metadata is missing, the filename text after `YYYY-MM-DD` becomes the episode title.
 - MP3 files are served only when they were found inside the requested podcast directory.
