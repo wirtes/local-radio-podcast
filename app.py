@@ -140,24 +140,78 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     @app.get("/")
     def index() -> Response:
         podcasts = scan_podcasts(config)
-        podcast_links = "\n".join(
-            f'  <li><a href="{absolute_url("feed", config, podcast_id=podcast.id)}">'
-            f"{escape_html(podcast.title)}</a></li>"
-            for podcast in podcasts
-        )
+        podcast_cards = "\n".join(render_podcast_card(config, podcast) for podcast in podcasts)
         body = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape_html(config.title)}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {{
+      background: #f6f7f9;
+    }}
+    .podcast-card {{
+      height: 100%;
+    }}
+    .podcast-cover {{
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      background: #e9ecef;
+    }}
+    .podcast-cover-placeholder {{
+      aspect-ratio: 1 / 1;
+      background: linear-gradient(135deg, #e9ecef, #cfd8dc);
+      color: #495057;
+    }}
+    .feed-url {{
+      font-size: 0.875rem;
+    }}
+    .copy-button {{
+      width: 2.75rem;
+      flex: 0 0 2.75rem;
+    }}
+  </style>
 </head>
 <body>
-  <h1>{escape_html(config.title)}</h1>
-  <p>{escape_html(config.description)}</p>
-  <ul>
-{podcast_links}
-  </ul>
+  <main class="container py-4 py-md-5">
+    <div class="mb-4">
+      <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
+      <p class="lead text-secondary mb-0">{escape_html(config.description)}</p>
+    </div>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+{podcast_cards}
+    </div>
+  </main>
+  <script>
+    function copyFeedUrl(button) {{
+      const input = document.getElementById(button.dataset.target);
+      if (!input) return;
+
+      const setCopied = function() {{
+        button.classList.remove("btn-outline-secondary");
+        button.classList.add("btn-success");
+        button.setAttribute("aria-label", "Copied");
+        setTimeout(function() {{
+          button.classList.remove("btn-success");
+          button.classList.add("btn-outline-secondary");
+          button.setAttribute("aria-label", "Copy feed URL");
+        }}, 1200);
+      }};
+
+      if (navigator.clipboard && window.isSecureContext) {{
+        navigator.clipboard.writeText(input.value).then(setCopied);
+        return;
+      }}
+
+      input.focus();
+      input.select();
+      document.execCommand("copy");
+      input.blur();
+      setCopied();
+    }}
+  </script>
 </body>
 </html>
 """
@@ -210,6 +264,47 @@ def send_episode_audio(config: AppConfig, podcast_id: str, episode_id: str):
         conditional=True,
         download_name=episode_download_name(episode),
     )
+
+
+def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
+    feed_url = absolute_url("feed", config, podcast_id=podcast.id)
+    image_url = podcast_image_url(config, podcast)
+    input_id = f"feed-url-{podcast.id}"
+    title = escape_html(podcast.title)
+    escaped_feed_url = escape_html(feed_url)
+
+    if image_url:
+        cover_html = (
+            f'<img src="{escape_html(image_url)}" class="card-img-top podcast-cover" '
+            f'alt="{title} cover">'
+        )
+    else:
+        cover_html = f"""<div class="card-img-top podcast-cover-placeholder d-flex align-items-center justify-content-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>"""
+
+    return f"""      <div class="col">
+        <div class="card podcast-card shadow-sm">
+          {cover_html}
+          <div class="card-body">
+            <h2 class="h5 card-title mb-3"><a class="link-dark text-decoration-none" href="{escaped_feed_url}">{title}</a></h2>
+            <label class="visually-hidden" for="{input_id}">Feed URL</label>
+            <div class="input-group">
+              <input id="{input_id}" class="form-control feed-url" type="text" readonly value="{escaped_feed_url}">
+              <button class="btn btn-outline-secondary copy-button" type="button" data-target="{input_id}" onclick="copyFeedUrl(this)" aria-label="Copy feed URL" title="Copy feed URL">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>"""
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:

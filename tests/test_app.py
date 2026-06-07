@@ -113,6 +113,11 @@ root_directory = "{library_dir}"
                 self.assertEqual(index_response.status_code, 200)
                 self.assertIn(b"Kitchen Radio", index_response.data)
                 self.assertIn(b"Evening News", index_response.data)
+                self.assertIn(b"podcast-card", index_response.data)
+                self.assertIn(b"card-img-top podcast-cover", index_response.data)
+                self.assertIn(b"feed-url-", index_response.data)
+                self.assertIn(b"copyFeedUrl", index_response.data)
+                self.assertIn(b"Copy feed URL", index_response.data)
                 self.assertNotIn(b".git", index_response.data)
                 self.assertNotIn(b".venv", index_response.data)
                 self.assertNotIn(b"__pycache__", index_response.data)
@@ -536,7 +541,7 @@ root_directory = "{library_dir}"
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(
-            rf'<a href="http://127\.0\.0\.1:8000(?P<path>[^"]+)">{re.escape(title)}</a>',
+            rf'<a[^>]+href="http://127\.0\.0\.1:8000(?P<path>[^"]+)"[^>]*>{re.escape(title)}</a>',
             html,
         )
         self.assertIsNotNone(match)
