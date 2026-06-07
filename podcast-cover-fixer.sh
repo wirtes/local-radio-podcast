@@ -2,7 +2,66 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-config_path="${1:-"$script_dir/config.toml"}"
+config_path="$script_dir/config.toml"
+mode=""
+
+usage() {
+  cat <<EOF
+Usage:
+  ./podcast-cover-fixer.sh --dry-run [config.toml]
+  ./podcast-cover-fixer.sh --write [config.toml]
+
+Flags:
+  --dry-run  Show which podcast cover files would be written. No files are changed.
+  --write    Write extracted artwork as artist.jpg in podcast folders missing a top-level JPG.
+
+No files were changed. Choose --dry-run to preview or --write to create artwork files.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      if [[ -n "$mode" ]]; then
+        echo "Choose only one mode: --dry-run or --write." >&2
+        exit 2
+      fi
+      mode="dry-run"
+      shift
+      ;;
+    --write)
+      if [[ -n "$mode" ]]; then
+        echo "Choose only one mode: --dry-run or --write." >&2
+        exit 2
+      fi
+      mode="write"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      config_path="$1"
+      shift
+      if [[ $# -gt 0 ]]; then
+        echo "Unexpected extra argument: $1" >&2
+        usage >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if [[ -z "$mode" ]]; then
+  usage
+  exit 0
+fi
 
 if [[ -x "$script_dir/.venv/bin/python" ]]; then
   python_bin="$script_dir/.venv/bin/python"
@@ -10,7 +69,7 @@ else
   python_bin="${PYTHON:-python3}"
 fi
 
-"$python_bin" - "$config_path" <<'PY'
+"$python_bin" - "$mode" "$config_path" <<'PY'
 from __future__ import annotations
 
 import io
@@ -22,7 +81,9 @@ from mutagen.id3 import APIC, ID3, ID3NoHeaderError
 
 
 def main() -> int:
-    config_path = Path(sys.argv[1]).expanduser().resolve()
+    mode = sys.argv[1]
+    write = mode == "write"
+    config_path = Path(sys.argv[2]).expanduser().resolve()
     if not config_path.exists():
         print(f"Config file not found: {config_path}", file=sys.stderr)
         return 1
@@ -42,12 +103,12 @@ def main() -> int:
 
     podcast_dirs = sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name.lower())
     for podcast_dir in podcast_dirs:
-        fix_podcast_cover(podcast_dir)
+        fix_podcast_cover(podcast_dir, write=write)
 
     return 0
 
 
-def fix_podcast_cover(podcast_dir: Path) -> None:
+def fix_podcast_cover(podcast_dir: Path, write: bool) -> None:
     if has_top_level_jpg(podcast_dir):
         print(f"SKIP existing JPG: {podcast_dir}")
         return
@@ -64,8 +125,11 @@ def fix_podcast_cover(podcast_dir: Path) -> None:
             continue
 
         output_path = podcast_dir / "artist.jpg"
-        output_path.write_bytes(jpg_data)
-        print(f"WROTE {output_path} from {mp3_path}")
+        if write:
+            output_path.write_bytes(jpg_data)
+            print(f"WROTE {output_path} from {mp3_path}")
+        else:
+            print(f"WOULD WRITE {output_path} from {mp3_path}")
         return
 
     print(f"SKIP no embedded JPG artwork found: {podcast_dir}")

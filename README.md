@@ -73,7 +73,13 @@ Each episode includes a stable non-permalink GUID, an item link, and an MP3 encl
 If podcast folders do not already have cover images, extract embedded MP3 artwork into each podcast root:
 
 ```sh
-./podcast-cover-fixer.sh
+./podcast-cover-fixer.sh --dry-run
+```
+
+Write the artwork files:
+
+```sh
+./podcast-cover-fixer.sh --write
 ```
 
 The script reads `config.toml`, scans each immediate podcast directory under `feed.root_directory`, and writes:
@@ -83,6 +89,7 @@ artist.jpg
 ```
 
 It skips any podcast directory that already has a top-level `.jpg` file. It searches MP3s recursively, so artwork inside year subdirectories is fine.
+If no flag is specified, it prints usage and does not change files.
 
 ## Repair MP3 Tags
 
