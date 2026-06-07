@@ -214,15 +214,21 @@ def is_podcast_directory(path: Path) -> bool:
         return False
     if path.name.startswith(".") or path.name in {"__pycache__", ".venv", "venv", "env"}:
         return False
-    return any(item.is_file() for item in path.rglob("*.mp3"))
+    return any(find_mp3_files(path))
 
 
 def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     episodes: list[Episode] = []
-    for path in sorted(podcast.path.rglob("*.mp3")):
-        if path.is_file():
-            episodes.append(read_episode(path, config))
+    for path in find_mp3_files(podcast.path):
+        episodes.append(read_episode(path, config))
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
+
+
+def find_mp3_files(root: Path) -> list[Path]:
+    return sorted(
+        (path for path in root.rglob("*") if path.is_file() and path.suffix.lower() == ".mp3"),
+        key=lambda path: str(path).lower(),
+    )
 
 
 def find_episode(config: AppConfig, podcast: Podcast, episode_id: str) -> Episode | None:

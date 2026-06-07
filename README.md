@@ -23,10 +23,12 @@ Every immediate directory inside `feed.root_directory` becomes a separate podcas
 /Users/you/Music/Local Podcasts/
   Morning Show/
     cover.jpg
-    episode-1.mp3
+    Morning Show 2026/
+      2026-03-04 episode-1.mp3
   Interviews/
     artwork.jpg
-    guest-a.mp3
+    Interviews 2026/
+      2026-04-12 guest-a.mp3
 ```
 
 Find your LAN IP on macOS with:
@@ -177,7 +179,7 @@ sudo ufw allow 8000/tcp
 
 - Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
 - Hidden folders, virtualenv/cache folders, and folders without any `.mp3` files are ignored.
-- Each podcast recursively scans its own directory for `.mp3` files.
+- Each podcast recursively scans its own directory and year subdirectories for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.
 - RSS items are sorted newest-first by filename date, then ID3 date metadata, then file modification time.

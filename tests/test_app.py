@@ -125,9 +125,10 @@ root_directory = "{library_dir}"
             root = Path(temp_dir)
             library_dir = root / "library"
             audio_dir = library_dir / "Radio Rips"
-            audio_dir.mkdir(parents=True)
-            older = audio_dir / "2026-03-04 Modern Jetset.mp3"
-            newer = audio_dir / "2026-03-11 Modern Jetset.mp3"
+            year_dir = audio_dir / "Radio Rips 2026"
+            year_dir.mkdir(parents=True)
+            older = year_dir / "2026-03-04 Modern Jetset.MP3"
+            newer = year_dir / "2026-03-11 Modern Jetset.mp3"
             older.write_bytes(b"older")
             newer.write_bytes(b"newer")
 
