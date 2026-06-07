@@ -63,6 +63,116 @@ http://YOUR_LAN_IP:8000/podcasts/PODCAST_ID/feed.xml
 
 The homepage lists the feed URL for each podcast folder.
 
+## Run on Debian Startup
+
+These commands assume the code lives at:
+
+```text
+/home/alw/code/local-radio-podcast
+```
+
+Install Python tooling:
+
+```sh
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip
+```
+
+Set up the app:
+
+```sh
+cd /home/alw/code/local-radio-podcast
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp config.example.toml config.toml
+```
+
+Edit `config.toml`:
+
+```sh
+nano config.toml
+```
+
+Set `server.base_url` to the Debian machine's LAN URL and `feed.root_directory` to your podcast root:
+
+```toml
+[server]
+base_url = "http://YOUR_DEBIAN_LAN_IP:8000"
+host = "0.0.0.0"
+port = 8000
+
+[feed]
+root_directory = "/path/to/your/podcast/root"
+```
+
+Test it manually:
+
+```sh
+cd /home/alw/code/local-radio-podcast
+.venv/bin/flask --app app run --host 0.0.0.0 --port 8000
+```
+
+Then open:
+
+```text
+http://YOUR_DEBIAN_LAN_IP:8000/
+```
+
+Stop the manual server with `Ctrl+C`.
+
+Create the systemd service:
+
+```sh
+sudo nano /etc/systemd/system/local-radio-podcast.service
+```
+
+Paste:
+
+```ini
+[Unit]
+Description=Local Radio Podcast Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alw
+Group=alw
+WorkingDirectory=/home/alw/code/local-radio-podcast
+ExecStart=/home/alw/code/local-radio-podcast/.venv/bin/flask --app app run --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable local-radio-podcast
+sudo systemctl start local-radio-podcast
+```
+
+Check status:
+
+```sh
+sudo systemctl status local-radio-podcast
+```
+
+Follow logs:
+
+```sh
+journalctl -u local-radio-podcast -f
+```
+
+If a firewall is enabled, allow the app port:
+
+```sh
+sudo ufw allow 8000/tcp
+```
+
 ## Behavior
 
 - Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
