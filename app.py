@@ -242,9 +242,15 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
     stat = path.stat()
     metadata = read_audio_metadata(path)
     filename_metadata = read_filename_metadata(path)
-    title = metadata.get("title") or filename_metadata.get("title") or path.stem
+    metadata_title = metadata.get("title")
+    if metadata_title == path.stem and filename_metadata.get("title"):
+        metadata_title = None
+
+    title = metadata_title or filename_metadata.get("title") or path.stem
     author = metadata.get("artist") or metadata.get("albumartist") or config.author
     description = metadata.get("comment") or metadata.get("description") or title
+    if description == path.stem and filename_metadata.get("title"):
+        description = title
     pubdate = parse_pubdate(filename_metadata.get("date") or metadata.get("date"), stat.st_mtime)
     duration_seconds = metadata.get("duration_seconds")
 
@@ -341,14 +347,17 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
         add_text(item, "description", episode.description)
         add_text(item, f"{{{CONTENT_NS}}}encoded", episode.description)
         add_text(item, f"{{{ITUNES_NS}}}author", episode.author)
+        add_text(item, f"{{{ITUNES_NS}}}title", episode.title)
         add_text(item, f"{{{ITUNES_NS}}}summary", episode.description)
+        add_text(item, f"{{{ITUNES_NS}}}episodeType", "full")
         if episode.duration_text:
             add_text(item, f"{{{ITUNES_NS}}}duration", episode.duration_text)
         if episode.album:
             add_text(item, f"{{{ITUNES_NS}}}subtitle", episode.album)
 
         audio_url = absolute_url("audio", config, podcast_id=podcast.id, episode_id=episode.id)
-        add_text(item, "guid", audio_url, {"isPermaLink": "true"})
+        add_text(item, "link", audio_url)
+        add_text(item, "guid", episode_guid(podcast, episode), {"isPermaLink": "false"})
         add_text(item, "pubDate", format_datetime(episode.pubdate))
         ET.SubElement(
             item,
@@ -384,6 +393,10 @@ def podcast_image_url(config: AppConfig, podcast: Podcast) -> str | None:
 def episode_id(path: Path) -> str:
     digest = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
     return digest[:20]
+
+
+def episode_guid(podcast: Podcast, episode: Episode) -> str:
+    return f"local-radio-podcast:{podcast.id}:{episode.id}"
 
 
 def podcast_id(path: Path) -> str:

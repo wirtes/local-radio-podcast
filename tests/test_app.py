@@ -33,6 +33,16 @@ class FakeAudioWithoutTitle:
     }
 
 
+class FakeAudioWithFilenameTitle:
+    info = FakeInfo()
+    tags = {
+        "title": ["2026-03-11 Modern Jetset"],
+        "artist": ["Station Host"],
+        "date": ["2001-01-01"],
+        "comment": ["2026-03-11 Modern Jetset"],
+    }
+
+
 class PodcastServerTest(unittest.TestCase):
     def test_feed_and_audio_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -108,6 +118,11 @@ root_directory = "{library_dir}"
                 enclosure = item.find("enclosure")
                 self.assertIsNotNone(enclosure)
                 self.assertEqual(enclosure.attrib["type"], "audio/mpeg")
+                self.assertEqual(item.findtext("link"), enclosure.attrib["url"])
+                guid = item.find("guid")
+                self.assertIsNotNone(guid)
+                self.assertEqual(guid.attrib["isPermaLink"], "false")
+                self.assertTrue(guid.text.startswith("local-radio-podcast:"))
 
                 audio_response = client.get(enclosure.attrib["url"].replace("http://127.0.0.1:8000", ""))
                 self.assertEqual(audio_response.status_code, 200)
@@ -162,8 +177,51 @@ root_directory = "{library_dir}"
                 items = rss.findall("./channel/item")
                 self.assertEqual(len(items), 2)
                 self.assertEqual(items[0].findtext("title"), "Modern Jetset")
+                self.assertEqual(
+                    items[0].findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}title"),
+                    "Modern Jetset",
+                )
                 self.assertIn("11 Mar 2026", items[0].findtext("pubDate"))
                 self.assertIn("04 Mar 2026", items[1].findtext("pubDate"))
+
+    def test_filename_title_wins_when_mp3_title_is_filename_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            audio_dir = library_dir / "Radio Rips"
+            audio_dir.mkdir(parents=True)
+            mp3 = audio_dir / "2026-03-11 Modern Jetset.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithFilenameTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                feed_path = self._first_link_for(index_response.data.decode(), "Radio Rips")
+
+                feed_response = client.get(feed_path)
+                rss = ET.fromstring(feed_response.data)
+                item = rss.find("./channel/item")
+                self.assertIsNotNone(item)
+                self.assertEqual(item.findtext("title"), "Modern Jetset")
+                self.assertEqual(item.findtext("description"), "Modern Jetset")
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(

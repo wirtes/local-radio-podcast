@@ -65,6 +65,9 @@ http://YOUR_LAN_IP:8000/podcasts/PODCAST_ID/feed.xml
 
 The homepage lists the feed URL for each podcast folder.
 
+For Apple Podcasts and iPod syncing, subscribe to the specific podcast feed URL, not the homepage URL.
+Each episode includes a stable non-permalink GUID, an item link, and an MP3 enclosure URL for better compatibility with older sync paths.
+
 ## Run on Debian Startup
 
 These commands assume the code lives at:
