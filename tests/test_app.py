@@ -34,6 +34,10 @@ class PodcastServerTest(unittest.TestCase):
             other_dir = library_dir / "Evening News"
             audio_dir.mkdir(parents=True)
             other_dir.mkdir()
+            (library_dir / ".git").mkdir()
+            (library_dir / ".venv").mkdir()
+            (library_dir / "__pycache__").mkdir()
+            (library_dir / "tests").mkdir()
             mp3 = audio_dir / "episode.mp3"
             mp3.write_bytes(b"not a real mp3, but enough for send_file")
             cover = audio_dir / "01-cover.jpg"
@@ -69,6 +73,10 @@ root_directory = "{library_dir}"
                 self.assertEqual(index_response.status_code, 200)
                 self.assertIn(b"Kitchen Radio", index_response.data)
                 self.assertIn(b"Evening News", index_response.data)
+                self.assertNotIn(b".git", index_response.data)
+                self.assertNotIn(b".venv", index_response.data)
+                self.assertNotIn(b"__pycache__", index_response.data)
+                self.assertNotIn(b"tests", index_response.data)
 
                 feed_path = self._first_link_for(index_response.data.decode(), "Kitchen Radio")
                 feed_response = client.get(feed_path)

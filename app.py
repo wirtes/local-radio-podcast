@@ -187,7 +187,7 @@ def scan_podcasts(config: AppConfig) -> list[Podcast]:
             image_path=find_podcast_image(path),
         )
         for path in sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
-        if path.is_dir()
+        if is_podcast_directory(path)
     ]
     return podcasts
 
@@ -206,6 +206,14 @@ def find_podcast_image(podcast_path: Path) -> Path | None:
         if path.is_file() and path.suffix.lower() == ".jpg"
     ]
     return jpgs[0] if jpgs else None
+
+
+def is_podcast_directory(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if path.name.startswith(".") or path.name in {"__pycache__", ".venv", "venv", "env"}:
+        return False
+    return any(item.is_file() for item in path.rglob("*.mp3"))
 
 
 def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:

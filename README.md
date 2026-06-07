@@ -176,6 +176,7 @@ sudo ufw allow 8000/tcp
 ## Behavior
 
 - Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
+- Hidden folders, virtualenv/cache folders, and folders without any `.mp3` files are ignored.
 - Each podcast recursively scans its own directory for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - RSS items are sorted newest-first by ID3 date metadata when available, otherwise by file modification time.
