@@ -115,8 +115,11 @@ For files named like `2026-03-04 Modern Jetset.mp3`, this writes:
 
 - Title: `2026-03-04 Modern Jetset`
 - Date: `2026-03-04`
+- Legacy date frames for older iPod/iTunes sync: year `2026`, day/month `0403`, track `20260304`
 - Artist: the podcast folder name
 - Album: the immediate parent folder name, such as `Modern Jetset 2026`
+
+Tags are saved as ID3v2.3 for better compatibility with older iPods.
 
 ## Run on Debian Startup
 

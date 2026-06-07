@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 
 from flask import Flask, Response, abort, send_file, url_for
 from mutagen import File as MutagenFile
-from mutagen.id3 import COMM, ID3, TALB, TDRC, TIT2, TPE1, ID3NoHeaderError
+from mutagen.id3 import COMM, ID3, TALB, TDAT, TDRC, TIT2, TPE1, TRCK, TYER, ID3NoHeaderError
 
 
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
@@ -451,6 +451,9 @@ def build_tag_targets(podcast: Podcast, path: Path, filename_metadata: dict[str,
         TagTarget("TPE1", "Artist", artist),
         TagTarget("TALB", "Album", album),
         TagTarget("TDRC", "Date", date),
+        TagTarget("TYER", "Year", date[:4]),
+        TagTarget("TDAT", "DayMonth", f"{date[8:10]}{date[5:7]}"),
+        TagTarget("TRCK", "Track", date.replace("-", "")),
         TagTarget("COMM", "Comment", title),
     ]
 
@@ -493,6 +496,9 @@ def write_id3_tags(path: Path, targets: list[TagTarget]) -> None:
     tags.delall("TPE1")
     tags.delall("TALB")
     tags.delall("TDRC")
+    tags.delall("TYER")
+    tags.delall("TDAT")
+    tags.delall("TRCK")
     tags.delall("COMM")
 
     target_map = {target.frame_id: target.value for target in targets}
@@ -500,8 +506,11 @@ def write_id3_tags(path: Path, targets: list[TagTarget]) -> None:
     tags.add(TPE1(encoding=3, text=target_map["TPE1"]))
     tags.add(TALB(encoding=3, text=target_map["TALB"]))
     tags.add(TDRC(encoding=3, text=target_map["TDRC"]))
+    tags.add(TYER(encoding=3, text=target_map["TYER"]))
+    tags.add(TDAT(encoding=3, text=target_map["TDAT"]))
+    tags.add(TRCK(encoding=3, text=target_map["TRCK"]))
     tags.add(COMM(encoding=3, lang="eng", desc="", text=target_map["COMM"]))
-    tags.save(path)
+    tags.save(path, v2_version=3)
 
 
 def add_text(parent: ET.Element, tag: str, text: str, attrs: dict[str, str] | None = None) -> None:

@@ -292,6 +292,9 @@ root_directory = "{library_dir}"
                 TagTarget("TPE1", "Artist", "Modern Jetset"),
                 TagTarget("TALB", "Album", "Modern Jetset 2026"),
                 TagTarget("TDRC", "Date", "2026-03-11"),
+                TagTarget("TYER", "Year", "2026"),
+                TagTarget("TDAT", "DayMonth", "1103"),
+                TagTarget("TRCK", "Track", "20260311"),
                 TagTarget("COMM", "Comment", "2026-03-11 Modern Jetset"),
             ]
 
@@ -302,6 +305,7 @@ root_directory = "{library_dir}"
             self.assertEqual(tags["TPE1"].text[0], "Modern Jetset")
             self.assertEqual(tags["TALB"].text[0], "Modern Jetset 2026")
             self.assertEqual(str(tags["TDRC"].text[0]), "2026-03-11")
+            self.assertEqual(str(tags["TRCK"].text[0]), "20260311")
 
     def test_diff_id3_tags_reports_added_and_changed_tags(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -325,7 +329,7 @@ root_directory = "{library_dir}"
             )
 
             add_diffs = diff_id3_tags(mp3, targets)
-            self.assertEqual([diff.status for diff in add_diffs], ["ADD", "ADD", "ADD", "ADD", "ADD"])
+            self.assertEqual([diff.status for diff in add_diffs], ["ADD"] * 8)
 
             tags = ID3()
             tags.add(TIT2(encoding=3, text="2026-06-06 Singing to the Same Sky"))
@@ -342,6 +346,9 @@ root_directory = "{library_dir}"
             self.assertEqual(by_frame["TPE1"].status, "OK")
             self.assertEqual(by_frame["TALB"].status, "CHANGE")
             self.assertEqual(by_frame["TDRC"].status, "CHANGE")
+            self.assertEqual(by_frame["TYER"].status, "ADD")
+            self.assertEqual(by_frame["TDAT"].status, "ADD")
+            self.assertEqual(by_frame["TRCK"].status, "ADD")
             self.assertEqual(by_frame["COMM"].status, "ADD")
 
     def test_repair_mp3_tags_output_shows_add_change_and_ok(self) -> None:
@@ -381,6 +388,9 @@ root_directory = "{library_dir}"
             self.assertIn("OK     Artist (TPE1): Modern Jetset", output)
             self.assertIn("ADD    Album (TALB): Modern Jetset 2026", output)
             self.assertIn("ADD    Date (TDRC): 2026-03-11", output)
+            self.assertIn("ADD    Year (TYER): 2026", output)
+            self.assertIn("ADD    DayMonth (TDAT): 1103", output)
+            self.assertIn("ADD    Track (TRCK): 20260311", output)
             self.assertIn("ADD    Comment (COMM): 2026-03-11 Modern Jetset", output)
 
     def test_repair_mp3_tags_can_target_single_podcast(self) -> None:
