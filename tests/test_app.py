@@ -116,6 +116,8 @@ root_directory = "{library_dir}"
                 self.assertIn(b"podcast-card", index_response.data)
                 self.assertIn(b"card-img-top podcast-cover", index_response.data)
                 self.assertIn(b"feed-url-", index_response.data)
+                self.assertIn(b"copy-status-", index_response.data)
+                self.assertIn(b"data-status-target", index_response.data)
                 self.assertIn(b"copyFeedUrl", index_response.data)
                 self.assertIn(b"Copy feed URL", index_response.data)
                 self.assertNotIn(b".git", index_response.data)

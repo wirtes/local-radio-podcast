@@ -172,6 +172,9 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       width: 2.75rem;
       flex: 0 0 2.75rem;
     }}
+    .copy-status {{
+      min-height: 1.25rem;
+    }}
   </style>
 </head>
 <body>
@@ -190,13 +193,20 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       if (!input) return;
 
       const setCopied = function() {{
+        const status = document.getElementById(button.dataset.statusTarget);
         button.classList.remove("btn-outline-secondary");
         button.classList.add("btn-success");
         button.setAttribute("aria-label", "Copied");
+        if (status) {{
+          status.textContent = "Copied";
+        }}
         setTimeout(function() {{
           button.classList.remove("btn-success");
           button.classList.add("btn-outline-secondary");
           button.setAttribute("aria-label", "Copy feed URL");
+          if (status) {{
+            status.textContent = "";
+          }}
         }}, 1200);
       }};
 
@@ -270,6 +280,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
     input_id = f"feed-url-{podcast.id}"
+    status_id = f"copy-status-{podcast.id}"
     title = escape_html(podcast.title)
     escaped_feed_url = escape_html(feed_url)
 
@@ -295,13 +306,14 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
             <label class="visually-hidden" for="{input_id}">Feed URL</label>
             <div class="input-group">
               <input id="{input_id}" class="form-control feed-url" type="text" readonly value="{escaped_feed_url}">
-              <button class="btn btn-outline-secondary copy-button" type="button" data-target="{input_id}" onclick="copyFeedUrl(this)" aria-label="Copy feed URL" title="Copy feed URL">
+              <button class="btn btn-outline-secondary copy-button" type="button" data-target="{input_id}" data-status-target="{status_id}" onclick="copyFeedUrl(this)" aria-label="Copy feed URL" title="Copy feed URL">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
                   <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
                 </svg>
               </button>
             </div>
+            <div id="{status_id}" class="copy-status small text-success mt-2" aria-live="polite"></div>
           </div>
         </div>
       </div>"""
