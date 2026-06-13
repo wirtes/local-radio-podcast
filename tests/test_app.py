@@ -80,6 +80,8 @@ class PodcastServerTest(unittest.TestCase):
             (library_dir / "tests").mkdir()
             mp3 = audio_dir / "episode.mp3"
             mp3.write_bytes(b"not a real mp3, but enough for send_file")
+            episode_info = "Tonight's playlist includes local premieres.\nFull show notes live here."
+            mp3.with_suffix(".txt").write_text(episode_info, encoding="utf-8")
             cover = audio_dir / "01-cover.jpg"
             cover.write_bytes(b"first cover")
             (audio_dir / "z-cover.jpg").write_bytes(b"second cover")
@@ -87,6 +89,7 @@ class PodcastServerTest(unittest.TestCase):
             nested_dir.mkdir()
             (nested_dir / "00-nested.jpg").write_bytes(b"not the show cover")
             (other_dir / "briefing.mp3").write_bytes(b"another fake mp3")
+            (other_dir / "briefing.txt").write_text("too small", encoding="utf-8")
             show_info = "Kitchen Radio is a weekly local music show.\nHosted by Station Host."
             (audio_dir / "Kitchen Radio.txt").write_text(show_info, encoding="utf-8")
             (other_dir / "Evening News.txt").write_text("too small", encoding="utf-8")
@@ -141,6 +144,8 @@ root_directory = "{library_dir}"
                 self.assertIn(b"Enclosure", detail_response.data)
                 self.assertIn(b"<summary class=\"link-secondary\">Show information</summary>", detail_response.data)
                 self.assertIn(b"Kitchen Radio is a weekly local music show.", detail_response.data)
+                self.assertIn(b"<summary class=\"link-secondary\">Episode information</summary>", detail_response.data)
+                self.assertIn(b"Tonight's playlist includes local premieres.", detail_response.data)
 
                 feed_path = self._feed_input_path_for(index_html, "Kitchen Radio")
                 feed_response = client.get(feed_path)
@@ -165,7 +170,11 @@ root_directory = "{library_dir}"
                 item = rss.find("./channel/item")
                 self.assertIsNotNone(item)
                 self.assertEqual(item.findtext("title"), "The First Track")
-                self.assertEqual(item.findtext("description"), "A locally hosted episode.")
+                self.assertEqual(item.findtext("description"), episode_info)
+                self.assertEqual(
+                    item.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}summary"),
+                    episode_info,
+                )
 
                 enclosure = item.find("enclosure")
                 self.assertIsNotNone(enclosure)

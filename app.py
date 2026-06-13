@@ -59,6 +59,7 @@ class Episode:
     path: Path
     title: str
     description: str
+    episode_info: str | None
     author: str
     album: str | None
     duration_seconds: int | None
@@ -425,6 +426,9 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
     .show-info-body {{
       white-space: pre-wrap;
     }}
+    .episode-info-body {{
+      white-space: pre-wrap;
+    }}
   </style>
 </head>
 <body>
@@ -479,13 +483,14 @@ def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -
     pubdate = format_datetime(episode.pubdate)
     duration = episode.duration_text or "Unknown"
     album = episode.album or podcast.title
+    description_html = render_episode_description(episode)
     return f"""        <article class="card episode-card shadow-sm">
           <div class="card-body">
             <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-2">
               <h3 class="h5 mb-0">{escape_html(episode.title)}</h3>
               <time class="text-secondary small" datetime="{episode.pubdate.isoformat()}">{escape_html(pubdate)}</time>
             </div>
-            <p class="text-secondary mb-3">{escape_html(episode.description)}</p>
+            {description_html}
             <audio controls preload="none" src="{escape_html(audio_url)}"></audio>
             <dl class="row xml-data mt-3 mb-0">
               <dt class="col-sm-2">GUID</dt>
@@ -499,6 +504,16 @@ def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -
             </dl>
           </div>
         </article>"""
+
+
+def render_episode_description(episode: Episode) -> str:
+    if episode.episode_info:
+        return f"""<details class="episode-info mb-3">
+              <summary class="link-secondary">Episode information</summary>
+              <div class="episode-info-body text-secondary mt-2">{escape_html(episode.episode_info)}</div>
+            </details>"""
+
+    return f'<p class="text-secondary mb-3">{escape_html(episode.description)}</p>'
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:
@@ -523,11 +538,22 @@ def find_podcast_show_info(config: AppConfig, podcast_path: Path) -> str | None:
         config.root_directory / f"{podcast_path.name}.txt",
     ]
     for path in candidates:
-        try:
-            if path.is_file() and path.stat().st_size > 10:
-                return path.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            continue
+        text = read_text_file_if_larger_than_10_bytes(path)
+        if text:
+            return text
+    return None
+
+
+def find_episode_info(path: Path) -> str | None:
+    return read_text_file_if_larger_than_10_bytes(path.with_suffix(".txt"))
+
+
+def read_text_file_if_larger_than_10_bytes(path: Path) -> str | None:
+    try:
+        if path.is_file() and path.stat().st_size > 10:
+            return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
     return None
 
 
@@ -608,7 +634,8 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
 
     title = filename_metadata.get("title") or metadata_title or path.stem
     author = metadata.get("artist") or metadata.get("albumartist") or config.author
-    description = filename_metadata.get("title") or metadata.get("comment") or metadata.get("description") or title
+    episode_info = find_episode_info(path)
+    description = episode_info or filename_metadata.get("title") or metadata.get("comment") or metadata.get("description") or title
     pubdate = parse_pubdate(filename_metadata.get("date") or metadata.get("date"), stat.st_mtime)
     duration_seconds = metadata.get("duration_seconds")
 
@@ -617,6 +644,7 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
         path=path,
         title=title,
         description=description,
+        episode_info=episode_info,
         author=author,
         album=metadata.get("album"),
         duration_seconds=duration_seconds,
