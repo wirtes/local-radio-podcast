@@ -50,6 +50,7 @@ class Podcast:
     title: str
     description: str
     image_path: Path | None
+    show_info: str | None = None
 
 
 @dataclass(frozen=True)
@@ -338,17 +339,20 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
 
     if image_url:
         cover_html = (
+            f'<a class="d-block" href="{escaped_page_url}" aria-label="Open {title}">'
             f'<img src="{escape_html(image_url)}" class="card-img-top podcast-cover" '
-            f'alt="{title} cover">'
+            f'alt="{title} cover"></a>'
         )
     else:
-        cover_html = f"""<div class="card-img-top podcast-cover-placeholder d-flex align-items-center justify-content-center">
+        cover_html = f"""<a class="d-block text-decoration-none" href="{escaped_page_url}" aria-label="Open {title}">
+        <div class="card-img-top podcast-cover-placeholder d-flex align-items-center justify-content-center">
           <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M9 18V5l12-2v13"></path>
             <circle cx="6" cy="18" r="3"></circle>
             <circle cx="18" cy="16" r="3"></circle>
           </svg>
-        </div>"""
+        </div>
+        </a>"""
 
     return f"""      <div class="col">
         <div class="card podcast-card shadow-sm">
@@ -377,6 +381,7 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
     episode_cards = "\n".join(render_episode_card(config, podcast, episode) for episode in episodes)
+    show_info_html = render_show_info(podcast)
 
     if image_url:
         cover_html = (
@@ -417,6 +422,9 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
     .xml-data {{
       font-size: 0.875rem;
     }}
+    .show-info-body {{
+      white-space: pre-wrap;
+    }}
   </style>
 </head>
 <body>
@@ -431,6 +439,7 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
       <div class="col">
         <h1 class="display-6 mb-2">{title}</h1>
         <p class="lead text-secondary">{description}</p>
+        {show_info_html}
         <dl class="row xml-data">
           <dt class="col-sm-3">Feed</dt>
           <dd class="col-sm-9"><a href="{escape_html(feed_url)}">{escape_html(feed_url)}</a></dd>
@@ -453,6 +462,16 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
 </body>
 </html>
 """
+
+
+def render_show_info(podcast: Podcast) -> str:
+    if not podcast.show_info:
+        return ""
+
+    return f"""<details class="show-info mb-4">
+          <summary class="link-secondary">Show information</summary>
+          <div class="show-info-body text-secondary mt-2">{escape_html(podcast.show_info)}</div>
+        </details>"""
 
 
 def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -> str:
@@ -490,11 +509,26 @@ def scan_podcasts(config: AppConfig) -> list[Podcast]:
             title=path.name,
             description=f"{config.description} ({path.name})",
             image_path=find_podcast_image(path),
+            show_info=find_podcast_show_info(config, path),
         )
         for path in sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
         if is_podcast_directory(path)
     ]
     return podcasts
+
+
+def find_podcast_show_info(config: AppConfig, podcast_path: Path) -> str | None:
+    candidates = [
+        podcast_path / f"{podcast_path.name}.txt",
+        config.root_directory / f"{podcast_path.name}.txt",
+    ]
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_size > 10:
+                return path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+    return None
 
 
 def find_podcast(config: AppConfig, podcast_id: str) -> Podcast | None:
@@ -638,12 +672,14 @@ def parse_pubdate(raw_date: str | None, fallback_mtime: float) -> datetime:
 def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode]) -> bytes:
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
+    show_description = podcast.show_info or podcast.description
 
     add_text(channel, "title", podcast.title)
     add_text(channel, "link", absolute_url("index", config))
-    add_text(channel, "description", podcast.description)
+    add_text(channel, "description", show_description)
     add_text(channel, "language", config.language)
     add_text(channel, f"{{{ITUNES_NS}}}author", config.author)
+    add_text(channel, f"{{{ITUNES_NS}}}summary", show_description)
     add_text(channel, f"{{{ITUNES_NS}}}explicit", config.explicit)
     add_text(channel, f"{{{ITUNES_NS}}}category", "", {"text": config.category})
     ET.SubElement(

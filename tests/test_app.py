@@ -87,6 +87,9 @@ class PodcastServerTest(unittest.TestCase):
             nested_dir.mkdir()
             (nested_dir / "00-nested.jpg").write_bytes(b"not the show cover")
             (other_dir / "briefing.mp3").write_bytes(b"another fake mp3")
+            show_info = "Kitchen Radio is a weekly local music show.\nHosted by Station Host."
+            (audio_dir / "Kitchen Radio.txt").write_text(show_info, encoding="utf-8")
+            (other_dir / "Evening News.txt").write_text("too small", encoding="utf-8")
 
             config = root / "config.toml"
             config.write_text(
@@ -136,6 +139,8 @@ root_directory = "{library_dir}"
                 self.assertIn(b"<audio controls", detail_response.data)
                 self.assertIn(b"GUID", detail_response.data)
                 self.assertIn(b"Enclosure", detail_response.data)
+                self.assertIn(b"<summary class=\"link-secondary\">Show information</summary>", detail_response.data)
+                self.assertIn(b"Kitchen Radio is a weekly local music show.", detail_response.data)
 
                 feed_path = self._feed_input_path_for(index_html, "Kitchen Radio")
                 feed_response = client.get(feed_path)
@@ -145,6 +150,11 @@ root_directory = "{library_dir}"
                 rss = ET.fromstring(feed_response.data)
                 channel = rss.find("./channel")
                 self.assertIsNotNone(channel)
+                self.assertEqual(channel.findtext("description"), show_info)
+                self.assertEqual(
+                    channel.findtext("{http://www.itunes.com/dtds/podcast-1.0.dtd}summary"),
+                    show_info,
+                )
                 image = channel.find("image")
                 self.assertIsNotNone(image)
                 self.assertIn("/cover.jpg?v=", image.findtext("url"))
