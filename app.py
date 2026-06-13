@@ -483,7 +483,8 @@ def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -
     pubdate = format_datetime(episode.pubdate)
     duration = episode.duration_text or "Unknown"
     album = episode.album or podcast.title
-    description_html = render_episode_description(episode)
+    description_html = "" if episode.episode_info else render_episode_description(episode)
+    episode_info_html = render_episode_info(episode)
     return f"""        <article class="card episode-card shadow-sm">
           <div class="card-body">
             <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-2">
@@ -502,18 +503,27 @@ def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -
               <dt class="col-sm-2">Album</dt>
               <dd class="col-sm-10">{escape_html(album)}</dd>
             </dl>
+            {episode_info_html}
           </div>
         </article>"""
 
 
 def render_episode_description(episode: Episode) -> str:
-    if episode.episode_info:
-        return f"""<details class="episode-info mb-3">
-              <summary class="link-secondary">Episode information</summary>
+    return f'<p class="text-secondary mb-3">{escape_html(episode.description)}</p>'
+
+
+def render_episode_info(episode: Episode) -> str:
+    if not episode.episode_info:
+        return ""
+
+    line_count = len(episode.episode_info.splitlines())
+    if line_count > 5:
+        return f"""<details class="episode-info mt-3">
+              <summary class="link-secondary">Playlist</summary>
               <div class="episode-info-body text-secondary mt-2">{escape_html(episode.episode_info)}</div>
             </details>"""
 
-    return f'<p class="text-secondary mb-3">{escape_html(episode.description)}</p>'
+    return f'<div class="episode-info-body text-secondary mt-3">{escape_html(episode.episode_info)}</div>'
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:

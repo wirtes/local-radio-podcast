@@ -144,8 +144,13 @@ root_directory = "{library_dir}"
                 self.assertIn(b"Enclosure", detail_response.data)
                 self.assertIn(b"<summary class=\"link-secondary\">Show information</summary>", detail_response.data)
                 self.assertIn(b"Kitchen Radio is a weekly local music show.", detail_response.data)
-                self.assertIn(b"<summary class=\"link-secondary\">Episode information</summary>", detail_response.data)
+                self.assertNotIn(b"Episode information", detail_response.data)
+                self.assertNotIn(b"<summary class=\"link-secondary\">Playlist</summary>", detail_response.data)
                 self.assertIn(b"Tonight's playlist includes local premieres.", detail_response.data)
+                self.assertLess(
+                    detail_response.data.index(b"Album"),
+                    detail_response.data.index(b"Tonight's playlist includes local premieres."),
+                )
 
                 feed_path = self._feed_input_path_for(index_html, "Kitchen Radio")
                 feed_response = client.get(feed_path)
@@ -199,6 +204,68 @@ root_directory = "{library_dir}"
                 self._assert_cached_artwork(cover_response)
                 self.assertEqual(cover_response.data, cover.read_bytes())
                 cover_response.close()
+
+    def test_episode_sidecar_playlist_display_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Super Sonido"
+            podcast_dir.mkdir(parents=True)
+            short_mp3 = podcast_dir / "2026-01-04 Super Sonido.mp3"
+            long_mp3 = podcast_dir / "2026-01-11 Super Sonido.mp3"
+            tiny_mp3 = podcast_dir / "2026-01-18 Super Sonido.mp3"
+            short_mp3.write_bytes(b"short")
+            long_mp3.write_bytes(b"long")
+            tiny_mp3.write_bytes(b"tiny")
+            short_info = "Guest host: DJ Luz\nTheme: Cumbia rarities"
+            long_info = "\n".join(
+                [
+                    "Track 1 - Artist A",
+                    "Track 2 - Artist B",
+                    "Track 3 - Artist C",
+                    "Track 4 - Artist D",
+                    "Track 5 - Artist E",
+                    "Track 6 - Artist F",
+                ]
+            )
+            short_mp3.with_suffix(".txt").write_text(short_info, encoding="utf-8")
+            long_mp3.with_suffix(".txt").write_text(long_info, encoding="utf-8")
+            tiny_mp3.with_suffix(".txt").write_text("tiny", encoding="utf-8")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                detail_path = self._first_link_for(index_response.data.decode(), "Super Sonido")
+                detail_response = client.get(detail_path)
+                self.assertEqual(detail_response.status_code, 200)
+
+                self.assertIn(b"Guest host: DJ Luz", detail_response.data)
+                self.assertIn(b"<summary class=\"link-secondary\">Playlist</summary>", detail_response.data)
+                self.assertIn(b"Track 6 - Artist F", detail_response.data)
+                self.assertNotIn(b"tiny", detail_response.data)
+
+                detail_html = detail_response.data.decode()
+                short_title_index = detail_html.index("2026-01-04 Super Sonido")
+                short_info_index = detail_html.index("Guest host: DJ Luz")
+                self.assertLess(detail_html.index("Album", short_title_index), short_info_index)
 
     def test_filename_date_sets_pubdate_and_sort_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
