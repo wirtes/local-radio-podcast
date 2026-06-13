@@ -111,6 +111,7 @@ root_directory = "{library_dir}"
 
                 index_response = client.get("/")
                 self.assertEqual(index_response.status_code, 200)
+                self._assert_uncached(index_response)
                 self.assertIn(b"Kitchen Radio", index_response.data)
                 self.assertIn(b"Evening News", index_response.data)
                 self.assertIn(b"podcast-card", index_response.data)
@@ -125,19 +126,31 @@ root_directory = "{library_dir}"
                 self.assertNotIn(b"__pycache__", index_response.data)
                 self.assertNotIn(b"tests", index_response.data)
 
-                feed_path = self._first_link_for(index_response.data.decode(), "Kitchen Radio")
+                index_html = index_response.data.decode()
+                detail_path = self._first_link_for(index_html, "Kitchen Radio")
+                detail_response = client.get(detail_path)
+                self.assertEqual(detail_response.status_code, 200)
+                self._assert_uncached(detail_response)
+                self.assertIn(b"All podcasts", detail_response.data)
+                self.assertIn(b"Episodes", detail_response.data)
+                self.assertIn(b"<audio controls", detail_response.data)
+                self.assertIn(b"GUID", detail_response.data)
+                self.assertIn(b"Enclosure", detail_response.data)
+
+                feed_path = self._feed_input_path_for(index_html, "Kitchen Radio")
                 feed_response = client.get(feed_path)
                 self.assertEqual(feed_response.status_code, 200)
+                self._assert_uncached(feed_response)
 
                 rss = ET.fromstring(feed_response.data)
                 channel = rss.find("./channel")
                 self.assertIsNotNone(channel)
                 image = channel.find("image")
                 self.assertIsNotNone(image)
-                self.assertTrue(image.findtext("url").endswith("/cover.jpg"))
+                self.assertIn("/cover.jpg?v=", image.findtext("url"))
                 itunes_image = channel.find("{http://www.itunes.com/dtds/podcast-1.0.dtd}image")
                 self.assertIsNotNone(itunes_image)
-                self.assertTrue(itunes_image.attrib["href"].endswith("/cover.jpg"))
+                self.assertIn("/cover.jpg?v=", itunes_image.attrib["href"])
 
                 item = rss.find("./channel/item")
                 self.assertIsNotNone(item)
@@ -157,12 +170,14 @@ root_directory = "{library_dir}"
 
                 audio_response = client.get(enclosure.attrib["url"].replace("http://127.0.0.1:8000", ""))
                 self.assertEqual(audio_response.status_code, 200)
+                self._assert_uncached(audio_response)
                 self.assertEqual(audio_response.data, mp3.read_bytes())
                 audio_response.close()
 
                 cover_path = image.findtext("url").replace("http://127.0.0.1:8000", "")
                 cover_response = client.get(cover_path)
                 self.assertEqual(cover_response.status_code, 200)
+                self._assert_cached_artwork(cover_response)
                 self.assertEqual(cover_response.data, cover.read_bytes())
                 cover_response.close()
 
@@ -199,7 +214,7 @@ root_directory = "{library_dir}"
                 flask_app = create_app(config)
                 client = flask_app.test_client()
                 index_response = client.get("/")
-                feed_path = self._first_link_for(index_response.data.decode(), "Radio Rips")
+                feed_path = self._feed_input_path_for(index_response.data.decode(), "Radio Rips")
 
                 feed_response = client.get(feed_path)
                 self.assertEqual(feed_response.status_code, 200)
@@ -245,7 +260,7 @@ root_directory = "{library_dir}"
                 flask_app = create_app(config)
                 client = flask_app.test_client()
                 index_response = client.get("/")
-                feed_path = self._first_link_for(index_response.data.decode(), "Radio Rips")
+                feed_path = self._feed_input_path_for(index_response.data.decode(), "Radio Rips")
 
                 feed_response = client.get(feed_path)
                 rss = ET.fromstring(feed_response.data)
@@ -284,7 +299,7 @@ root_directory = "{library_dir}"
                 flask_app = create_app(config)
                 client = flask_app.test_client()
                 index_response = client.get("/")
-                feed_path = self._first_link_for(index_response.data.decode(), "Radio Rips")
+                feed_path = self._feed_input_path_for(index_response.data.decode(), "Radio Rips")
 
                 feed_response = client.get(feed_path)
                 rss = ET.fromstring(feed_response.data)
@@ -548,6 +563,29 @@ root_directory = "{library_dir}"
         )
         self.assertIsNotNone(match)
         return match.group("path")
+
+    def _feed_input_path_for(self, html: str, title: str) -> str:
+        title_at = html.index(f">{title}</a>")
+        match = re.search(r'<input[^>]+value="http://127\.0\.0\.1:8000(?P<path>[^"]+)"', html[title_at:])
+        self.assertIsNotNone(match)
+        return match.group("path")
+
+    def _assert_uncached(self, response) -> None:
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertEqual(response.headers["Pragma"], "no-cache")
+        self.assertEqual(response.headers["Expires"], "0")
+        self.assertEqual(response.headers["Surrogate-Control"], "no-store")
+        self.assertEqual(response.headers["CDN-Cache-Control"], "no-store")
+        self.assertEqual(response.headers["Cloudflare-CDN-Cache-Control"], "no-store")
+        self.assertNotIn("ETag", response.headers)
+        self.assertNotIn("Last-Modified", response.headers)
+
+    def _assert_cached_artwork(self, response) -> None:
+        self.assertEqual(response.headers["Cache-Control"], "public, max-age=604800, immutable")
+        self.assertEqual(response.headers["Surrogate-Control"], "max-age=604800")
+        self.assertEqual(response.headers["CDN-Cache-Control"], "public, max-age=604800")
+        self.assertEqual(response.headers["Cloudflare-CDN-Cache-Control"], "public, max-age=604800")
+        self.assertNotIn("Pragma", response.headers)
 
 
 if __name__ == "__main__":

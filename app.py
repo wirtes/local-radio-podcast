@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
-from flask import Flask, Response, abort, send_file, url_for
+from flask import Flask, Response, abort, request, send_file, url_for
 from mutagen import File as MutagenFile
 from mutagen.id3 import COMM, ID3, TALB, TDAT, TDRC, TIT2, TPE1, TRCK, TYER, ID3NoHeaderError
 
@@ -137,6 +137,12 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     app = Flask(__name__)
     app.config["PODCAST_CONFIG"] = config
 
+    @app.after_request
+    def add_no_cache_headers(response: Response) -> Response:
+        if request.endpoint == "cover" and response.status_code == 200:
+            return cache_artwork_response(response)
+        return no_cache_response(response)
+
     @app.get("/")
     def index() -> Response:
         podcasts = scan_podcasts(config)
@@ -236,6 +242,15 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         xml = build_feed_xml(config, podcast, episodes)
         return Response(xml, mimetype="application/rss+xml; charset=utf-8")
 
+    @app.get("/podcasts/<podcast_id>/")
+    def podcast_page(podcast_id: str) -> Response:
+        podcast = find_podcast(config, podcast_id)
+        if podcast is None:
+            abort(404)
+        episodes = scan_episodes(config, podcast)
+        body = build_podcast_html(config, podcast, episodes)
+        return Response(body, mimetype="text/html")
+
     @app.get("/podcasts/<podcast_id>/audio/<episode_id>.mp3")
     def audio(podcast_id: str, episode_id: str):
         return send_episode_audio(config, podcast_id, episode_id)
@@ -253,7 +268,9 @@ def create_app(config_path: str | Path | None = None) -> Flask:
             podcast.image_path,
             mimetype="image/jpeg",
             as_attachment=False,
-            conditional=True,
+            conditional=False,
+            etag=False,
+            max_age=0,
             download_name=podcast.image_path.name,
         )
 
@@ -271,18 +288,44 @@ def send_episode_audio(config: AppConfig, podcast_id: str, episode_id: str):
         episode.path,
         mimetype="audio/mpeg",
         as_attachment=False,
-        conditional=True,
+        conditional=False,
+        etag=False,
+        max_age=0,
         download_name=episode_download_name(episode),
     )
 
 
+def no_cache_response(response: Response) -> Response:
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["Surrogate-Control"] = "no-store"
+    response.headers["CDN-Cache-Control"] = "no-store"
+    response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
+    response.headers.pop("ETag", None)
+    response.headers.pop("Last-Modified", None)
+    return response
+
+
+def cache_artwork_response(response: Response) -> Response:
+    response.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    response.headers["Surrogate-Control"] = "max-age=604800"
+    response.headers["CDN-Cache-Control"] = "public, max-age=604800"
+    response.headers["Cloudflare-CDN-Cache-Control"] = "public, max-age=604800"
+    response.headers.pop("Pragma", None)
+    response.headers.pop("Expires", None)
+    return response
+
+
 def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
+    page_url = absolute_url("podcast_page", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
     input_id = f"feed-url-{podcast.id}"
     status_id = f"copy-status-{podcast.id}"
     title = escape_html(podcast.title)
     escaped_feed_url = escape_html(feed_url)
+    escaped_page_url = escape_html(page_url)
 
     if image_url:
         cover_html = (
@@ -302,7 +345,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
         <div class="card podcast-card shadow-sm">
           {cover_html}
           <div class="card-body">
-            <h2 class="h5 card-title mb-3"><a class="link-dark text-decoration-none" href="{escaped_feed_url}">{title}</a></h2>
+            <h2 class="h5 card-title mb-3"><a class="link-dark text-decoration-none" href="{escaped_page_url}">{title}</a></h2>
             <label class="visually-hidden" for="{input_id}">Feed URL</label>
             <div class="input-group">
               <input id="{input_id}" class="form-control feed-url" type="text" readonly value="{escaped_feed_url}">
@@ -317,6 +360,117 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
           </div>
         </div>
       </div>"""
+
+
+def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episode]) -> str:
+    title = escape_html(podcast.title)
+    description = escape_html(podcast.description)
+    feed_url = absolute_url("feed", config, podcast_id=podcast.id)
+    image_url = podcast_image_url(config, podcast)
+    episode_cards = "\n".join(render_episode_card(config, podcast, episode) for episode in episodes)
+
+    if image_url:
+        cover_html = (
+            f'<img src="{escape_html(image_url)}" class="podcast-page-cover rounded shadow-sm" '
+            f'alt="{title} cover">'
+        )
+    else:
+        cover_html = """<div class="podcast-page-cover rounded shadow-sm d-flex align-items-center justify-content-center bg-secondary-subtle text-secondary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18V5l12-2v13"></path>
+            <circle cx="6" cy="18" r="3"></circle>
+            <circle cx="18" cy="16" r="3"></circle>
+          </svg>
+        </div>"""
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {{
+      background: #f6f7f9;
+    }}
+    .podcast-page-cover {{
+      width: min(100%, 260px);
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+    }}
+    .episode-card {{
+      border-radius: 0.5rem;
+    }}
+    audio {{
+      width: 100%;
+    }}
+    .xml-data {{
+      font-size: 0.875rem;
+    }}
+  </style>
+</head>
+<body>
+  <main class="container py-4 py-md-5">
+    <nav class="mb-4">
+      <a class="link-secondary text-decoration-none" href="{escape_html(absolute_url("index", config))}">&larr; All podcasts</a>
+    </nav>
+    <section class="row g-4 align-items-start mb-5">
+      <div class="col-12 col-md-auto">
+        {cover_html}
+      </div>
+      <div class="col">
+        <h1 class="display-6 mb-2">{title}</h1>
+        <p class="lead text-secondary">{description}</p>
+        <dl class="row xml-data">
+          <dt class="col-sm-3">Feed</dt>
+          <dd class="col-sm-9"><a href="{escape_html(feed_url)}">{escape_html(feed_url)}</a></dd>
+          <dt class="col-sm-3">Language</dt>
+          <dd class="col-sm-9">{escape_html(config.language)}</dd>
+          <dt class="col-sm-3">Author</dt>
+          <dd class="col-sm-9">{escape_html(config.author)}</dd>
+          <dt class="col-sm-3">Episodes</dt>
+          <dd class="col-sm-9">{len(episodes)}</dd>
+        </dl>
+      </div>
+    </section>
+    <section>
+      <h2 class="h4 mb-3">Episodes</h2>
+      <div class="vstack gap-3">
+{episode_cards}
+      </div>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_episode_card(config: AppConfig, podcast: Podcast, episode: Episode) -> str:
+    audio_url = episode_audio_url(config, podcast, episode)
+    pubdate = format_datetime(episode.pubdate)
+    duration = episode.duration_text or "Unknown"
+    album = episode.album or podcast.title
+    return f"""        <article class="card episode-card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-2">
+              <h3 class="h5 mb-0">{escape_html(episode.title)}</h3>
+              <time class="text-secondary small" datetime="{episode.pubdate.isoformat()}">{escape_html(pubdate)}</time>
+            </div>
+            <p class="text-secondary mb-3">{escape_html(episode.description)}</p>
+            <audio controls preload="none" src="{escape_html(audio_url)}"></audio>
+            <dl class="row xml-data mt-3 mb-0">
+              <dt class="col-sm-2">GUID</dt>
+              <dd class="col-sm-10 text-break">{escape_html(episode_guid(podcast, episode))}</dd>
+              <dt class="col-sm-2">Enclosure</dt>
+              <dd class="col-sm-10 text-break"><a href="{escape_html(audio_url)}">{escape_html(audio_url)}</a></dd>
+              <dt class="col-sm-2">Duration</dt>
+              <dd class="col-sm-10">{escape_html(duration)}</dd>
+              <dt class="col-sm-2">Album</dt>
+              <dd class="col-sm-10">{escape_html(album)}</dd>
+            </dl>
+          </div>
+        </article>"""
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:
@@ -725,7 +879,12 @@ def absolute_url(endpoint: str, config: AppConfig, **values: str) -> str:
 
 def podcast_image_url(config: AppConfig, podcast: Podcast) -> str | None:
     if podcast.image_path:
-        return absolute_url("cover", config, podcast_id=podcast.id)
+        return absolute_url(
+            "cover",
+            config,
+            podcast_id=podcast.id,
+            v=str(podcast.image_path.stat().st_mtime_ns),
+        )
     return config.image_url
 
 

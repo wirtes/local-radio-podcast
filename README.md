@@ -49,6 +49,8 @@ Then open:
 http://YOUR_LAN_IP:8000/
 ```
 
+The homepage shows podcast cards. Click a podcast title to open a pretty HTML episode page with audio players, or copy the raw `feed.xml` URL from the card.
+
 ## Subscribe in Apple Podcasts
 
 On the same local network, open Apple Podcasts and choose:
@@ -275,3 +277,5 @@ sudo ufw allow 8000/tcp
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
 - When MP3 title metadata is missing or only repeats the filename, the filename becomes the episode title.
 - MP3 files are served only when they were found inside the requested podcast directory.
+- Feed and MP3 responses include no-store cache headers, and feeds are rebuilt from the podcast directories on every request.
+- Artwork URLs include a file modified-time version query string and are cacheable for clients/CDNs.
