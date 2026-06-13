@@ -161,6 +161,13 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     .podcast-card {{
       height: 100%;
     }}
+    .podcast-card .card-body {{
+      padding: 0.75rem;
+    }}
+    .podcast-card .card-title {{
+      font-size: 1rem;
+      line-height: 1.25;
+    }}
     .podcast-cover {{
       aspect-ratio: 1 / 1;
       object-fit: cover;
@@ -172,14 +179,16 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       color: #495057;
     }}
     .feed-url {{
-      font-size: 0.875rem;
+      font-size: 0.75rem;
     }}
     .copy-button {{
-      width: 2.75rem;
-      flex: 0 0 2.75rem;
+      width: 2.25rem;
+      flex: 0 0 2.25rem;
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
     }}
     .copy-status {{
-      min-height: 1.25rem;
+      min-height: 1rem;
     }}
   </style>
 </head>
@@ -189,7 +198,7 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
       <p class="lead text-secondary mb-0">{escape_html(config.description)}</p>
     </div>
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-3">
 {podcast_cards}
     </div>
   </main>
@@ -345,7 +354,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
         <div class="card podcast-card shadow-sm">
           {cover_html}
           <div class="card-body">
-            <h2 class="h5 card-title mb-3"><a class="link-dark text-decoration-none" href="{escaped_page_url}">{title}</a></h2>
+            <h2 class="h6 card-title mb-2"><a class="link-dark text-decoration-none" href="{escaped_page_url}">{title}</a></h2>
             <label class="visually-hidden" for="{input_id}">Feed URL</label>
             <div class="input-group">
               <input id="{input_id}" class="form-control feed-url" type="text" readonly value="{escaped_feed_url}">
@@ -356,7 +365,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
                 </svg>
               </button>
             </div>
-            <div id="{status_id}" class="copy-status small text-success mt-2" aria-live="polite"></div>
+            <div id="{status_id}" class="copy-status small text-success mt-1" aria-live="polite"></div>
           </div>
         </div>
       </div>"""
