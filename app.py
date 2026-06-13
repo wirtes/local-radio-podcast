@@ -520,10 +520,32 @@ def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
 
 
 def find_mp3_files(root: Path) -> list[Path]:
-    return sorted(
-        (path for path in root.rglob("*") if path.is_file() and path.suffix.lower() == ".mp3"),
-        key=lambda path: str(path).lower(),
-    )
+    results: list[Path] = []
+    seen_dirs: set[Path] = set()
+
+    def walk(directory: Path) -> None:
+        try:
+            resolved = directory.resolve()
+        except OSError:
+            return
+
+        if resolved in seen_dirs:
+            return
+        seen_dirs.add(resolved)
+
+        try:
+            children = sorted(directory.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            return
+
+        for child in children:
+            if child.is_dir():
+                walk(child)
+            elif child.is_file() and child.suffix.lower() == ".mp3":
+                results.append(child)
+
+    walk(root)
+    return sorted(results, key=lambda path: str(path).lower())
 
 
 def find_episode(config: AppConfig, podcast: Podcast, episode_id: str) -> Episode | None:

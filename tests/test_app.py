@@ -230,6 +230,47 @@ root_directory = "{library_dir}"
                 self.assertIn("11 Mar 2026", items[0].findtext("pubDate"))
                 self.assertIn("04 Mar 2026", items[1].findtext("pubDate"))
 
+    def test_scan_episodes_follows_symlinked_year_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            audio_dir = library_dir / "Birdsong"
+            actual_year_dir = root / "actual" / "Birdsong 2026"
+            symlink_year_dir = audio_dir / "Birdsong 2026"
+            audio_dir.mkdir(parents=True)
+            actual_year_dir.mkdir(parents=True)
+            symlink_year_dir.symlink_to(actual_year_dir, target_is_directory=True)
+            mp3 = actual_year_dir / "2026-06-12 Birdsong.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                feed_path = self._feed_input_path_for(index_response.data.decode(), "Birdsong")
+
+                feed_response = client.get(feed_path)
+                self.assertEqual(feed_response.status_code, 200)
+                rss = ET.fromstring(feed_response.data)
+                self.assertEqual(rss.findtext("./channel/item/title"), "2026-06-12 Birdsong")
+
     def test_filename_title_wins_when_mp3_title_is_filename_stem(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
