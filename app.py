@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import mimetypes
 import os
 import re
 import tomllib
@@ -27,6 +28,19 @@ DEFAULT_ENTRIES_PER_PAGE = 10
 IGNORED_PODCAST_DIRECTORY_NAMES = {"__pycache__", ".venv", "venv", "env", "tests"}
 PODCAST_INFO_FILENAME = "_info.yaml"
 PODCAST_INFO_CACHE: dict[Path, tuple[int | None, tuple[str, ...]]] = {}
+AUDIO_FILE_EXTENSIONS = {
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".alac",
+    ".flac",
+    ".m4a",
+    ".m4b",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+}
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("atom", ATOM_NS)
@@ -342,7 +356,7 @@ def send_episode_audio(config: AppConfig, podcast_id: str, episode_id: str):
         abort(404)
     return send_file(
         episode.path,
-        mimetype="audio/mpeg",
+        mimetype=audio_mimetype(episode.path),
         as_attachment=False,
         conditional=False,
         etag=False,
@@ -968,7 +982,7 @@ def find_podcast_image(podcast_path: Path) -> Path | None:
 def is_podcast_directory(path: Path) -> bool:
     if not is_visible_podcast_candidate(path):
         return False
-    return has_mp3_file(path)
+    return has_audio_file(path)
 
 
 def is_visible_podcast_candidate(path: Path) -> bool:
@@ -981,13 +995,13 @@ def is_visible_podcast_candidate(path: Path) -> bool:
 
 def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     episodes: list[Episode] = []
-    for path in find_mp3_files(podcast.path):
+    for path in find_audio_files(podcast.path):
         episodes.append(read_episode(path, config))
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
 
 
 def scan_episode_paths(podcast: Podcast) -> list[Path]:
-    return sorted(find_mp3_files(podcast.path), key=episode_path_sort_key, reverse=True)
+    return sorted(find_audio_files(podcast.path), key=episode_path_sort_key, reverse=True)
 
 
 def episode_path_sort_key(path: Path) -> tuple[datetime, str]:
@@ -999,7 +1013,7 @@ def episode_path_sort_key(path: Path) -> tuple[datetime, str]:
     return (parse_pubdate(filename_metadata.get("date"), fallback_mtime), str(path).lower())
 
 
-def has_mp3_file(root: Path) -> bool:
+def has_audio_file(root: Path) -> bool:
     seen_dirs: set[Path] = set()
 
     def walk(directory: Path) -> bool:
@@ -1018,7 +1032,7 @@ def has_mp3_file(root: Path) -> bool:
             return False
 
         for child in children:
-            if child.is_file() and child.suffix.lower() == ".mp3":
+            if is_audio_file(child):
                 return True
 
         return any(child.is_dir() and walk(child) for child in children)
@@ -1026,7 +1040,19 @@ def has_mp3_file(root: Path) -> bool:
     return walk(root)
 
 
+def is_audio_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in AUDIO_FILE_EXTENSIONS
+
+
+def find_audio_files(root: Path) -> list[Path]:
+    return find_files_by_extension(root, AUDIO_FILE_EXTENSIONS)
+
+
 def find_mp3_files(root: Path) -> list[Path]:
+    return find_files_by_extension(root, {".mp3"})
+
+
+def find_files_by_extension(root: Path, extensions: set[str]) -> list[Path]:
     results: list[Path] = []
     seen_dirs: set[Path] = set()
 
@@ -1048,7 +1074,7 @@ def find_mp3_files(root: Path) -> list[Path]:
         for child in children:
             if child.is_dir():
                 walk(child)
-            elif child.is_file() and child.suffix.lower() == ".mp3":
+            elif child.is_file() and child.suffix.lower() in extensions:
                 results.append(child)
 
     walk(root)
@@ -1056,7 +1082,7 @@ def find_mp3_files(root: Path) -> list[Path]:
 
 
 def find_episode(config: AppConfig, podcast: Podcast, episode_id_value: str) -> Episode | None:
-    for path in find_mp3_files(podcast.path):
+    for path in find_audio_files(podcast.path):
         if episode_id(path) == episode_id_value:
             return read_episode(path, config)
     return None
@@ -1190,7 +1216,7 @@ def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode])
             {
                 "url": audio_url,
                 "length": str(episode.size),
-                "type": "audio/mpeg",
+                "type": audio_mimetype(episode.path),
             },
         )
 
@@ -1432,9 +1458,17 @@ def episode_guid(podcast: Podcast, episode: Episode) -> str:
 
 def episode_download_name(episode: Episode) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", episode.title).strip("-") or episode.id
-    if not stem.lower().endswith(".mp3"):
-        stem = f"{stem}.mp3"
+    suffix = episode.path.suffix.lower() or ".mp3"
+    if not stem.lower().endswith(suffix):
+        stem = f"{stem}{suffix}"
     return stem
+
+
+def audio_mimetype(path: Path) -> str:
+    if path.suffix.lower() in {".m4a", ".m4b"}:
+        return "audio/mp4"
+    mimetype, _ = mimetypes.guess_type(path.name)
+    return mimetype or "application/octet-stream"
 
 
 def podcast_id(path: Path) -> str:

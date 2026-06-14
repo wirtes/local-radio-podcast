@@ -590,6 +590,56 @@ root_directory = "{library_dir}"
                 self.assertIn("11 Mar 2026", items[0].findtext("pubDate"))
                 self.assertIn("04 Mar 2026", items[1].findtext("pubDate"))
 
+    def test_m4a_files_are_published_as_podcast_episodes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "The Starlight Motel"
+            podcast_dir.mkdir(parents=True)
+            m4a = podcast_dir / "2026-06-01 The Starlight Motel.m4a"
+            m4a.write_bytes(b"m4a audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+
+                index_response = client.get("/")
+                self.assertEqual(index_response.status_code, 200)
+                index_html = index_response.data.decode()
+                self.assertIn("The Starlight Motel", index_html)
+
+                feed_path = self._feed_input_path_for(index_html, "The Starlight Motel")
+                feed_response = client.get(feed_path)
+                self.assertEqual(feed_response.status_code, 200)
+                rss = ET.fromstring(feed_response.data)
+                enclosure = rss.find("./channel/item/enclosure")
+                self.assertIsNotNone(enclosure)
+                self.assertEqual(enclosure.attrib["type"], "audio/mp4")
+                self.assertIn("/2026-06-01-The-Starlight-Motel.m4a?v=", enclosure.attrib["url"])
+
+                audio_response = client.get(enclosure.attrib["url"].replace("http://127.0.0.1:8000", ""))
+                self.assertEqual(audio_response.status_code, 200)
+                self.assertEqual(audio_response.mimetype, "audio/mp4")
+                self.assertEqual(audio_response.data, m4a.read_bytes())
+                audio_response.close()
+
     def test_scan_episodes_follows_symlinked_year_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
