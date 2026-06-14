@@ -25,6 +25,8 @@ FILENAME_DATE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:\s+(?P<title>.+))
 ENTRIES_PER_PAGE_OPTIONS = (10, 25, 50, 100)
 DEFAULT_ENTRIES_PER_PAGE = 10
 IGNORED_PODCAST_DIRECTORY_NAMES = {"__pycache__", ".venv", "venv", "env", "tests"}
+PODCAST_INFO_FILENAME = "_info.yaml"
+PODCAST_INFO_CACHE: dict[Path, tuple[int | None, tuple[str, ...]]] = {}
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("atom", ATOM_NS)
@@ -54,6 +56,7 @@ class Podcast:
     description: str
     image_path: Path | None
     show_info: str | None = None
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -150,14 +153,18 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     @app.get("/")
     def index() -> Response:
-        podcast_paths = scan_podcast_paths(config)
+        selected_tag = parse_tag_filter(request.args.get("tag"))
+        all_podcast_paths = scan_podcast_paths(config)
+        podcast_paths = filter_podcast_paths_by_tag(all_podcast_paths, selected_tag)
+        available_tags = collect_podcast_tags(all_podcast_paths)
         per_page = parse_per_page(request.args.get("per_page"))
         page = parse_page(request.args.get("page"))
         pagination = paginate(len(podcast_paths), page, per_page)
         visible_paths = podcast_paths[pagination.start_index:pagination.end_index]
         podcasts = [build_podcast(config, path) for path in visible_paths]
         podcast_cards = "\n".join(render_podcast_card(config, podcast) for podcast in podcasts)
-        pagination_html = render_index_pagination_controls(config, pagination)
+        pagination_html = render_index_pagination_controls(config, pagination, selected_tag)
+        tag_filter_html = render_tag_filters(config, available_tags, selected_tag)
         body = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -201,6 +208,15 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     .copy-status {{
       min-height: 1rem;
     }}
+    .podcast-tags {{
+      min-height: 1.5rem;
+    }}
+    .podcast-tag {{
+      font-size: 0.75rem;
+    }}
+    .tag-filters {{
+      row-gap: 0.5rem;
+    }}
     .entry-pager-form {{
       max-width: 13rem;
     }}
@@ -212,6 +228,7 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
       <p class="lead text-secondary mb-0">{escape_html(config.description)}</p>
     </div>
+    {tag_filter_html}
     <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3 mb-3">
       <div class="text-secondary small">{render_pagination_summary(pagination, "podcast")}</div>
       {pagination_html}
@@ -359,6 +376,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
     title = escape_html(podcast.title)
     escaped_feed_url = escape_html(feed_url)
     escaped_page_url = escape_html(page_url)
+    tags_html = render_podcast_tags(config, podcast.tags)
 
     if image_url:
         cover_html = (
@@ -382,6 +400,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
           {cover_html}
           <div class="card-body">
             <h2 class="h6 card-title mb-2"><a class="link-dark text-decoration-none" href="{escaped_page_url}">{title}</a></h2>
+            {tags_html}
             <label class="visually-hidden" for="{input_id}">Feed URL</label>
             <div class="input-group">
               <input id="{input_id}" class="form-control feed-url" type="text" readonly value="{escaped_feed_url}">
@@ -396,6 +415,18 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
           </div>
         </div>
       </div>"""
+
+
+def render_podcast_tags(config: AppConfig, tags: tuple[str, ...]) -> str:
+    if not tags:
+        return '<div class="podcast-tags mb-2"></div>'
+    tag_links = "\n".join(
+        f'<a class="badge rounded-pill text-bg-light border text-secondary text-decoration-none podcast-tag" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, tag))}">{escape_html(tag)}</a>'
+        for tag in tags
+    )
+    return f"""<div class="podcast-tags d-flex flex-wrap gap-1 mb-2">
+              {tag_links}
+            </div>"""
 
 
 @dataclass(frozen=True)
@@ -568,6 +599,32 @@ def render_pagination_summary(pagination: Pagination, item_label: str) -> str:
     )
 
 
+def parse_tag_filter(raw_value: str | None) -> str | None:
+    value = (raw_value or "").strip()
+    return value or None
+
+
+def render_tag_filters(config: AppConfig, tags: tuple[str, ...], selected_tag: str | None) -> str:
+    if not tags:
+        return ""
+
+    all_class = "btn-secondary" if selected_tag is None else "btn-outline-secondary"
+    tag_buttons = [
+        f'<a class="btn btn-sm {all_class}" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, None))}">All tags</a>'
+    ]
+    for tag in tags:
+        button_class = "btn-secondary" if tag == selected_tag else "btn-outline-secondary"
+        tag_buttons.append(
+            f'<a class="btn btn-sm {button_class}" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, tag))}">{escape_html(tag)}</a>'
+        )
+
+    return f"""<section class="mb-4" aria-label="Filter podcasts by tag">
+      <div class="d-flex flex-wrap tag-filters gap-2">
+        {"".join(tag_buttons)}
+      </div>
+    </section>"""
+
+
 def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: Pagination) -> str:
     selected_options = "\n".join(
         f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
@@ -601,21 +658,31 @@ def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: 
         </div>"""
 
 
-def render_index_pagination_controls(config: AppConfig, pagination: Pagination) -> str:
+def render_index_pagination_controls(
+    config: AppConfig,
+    pagination: Pagination,
+    selected_tag: str | None,
+) -> str:
     selected_options = "\n".join(
         f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
         for option in ENTRIES_PER_PAGE_OPTIONS
     )
     previous_disabled = " disabled" if pagination.page <= 1 else ""
     next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
-    first_url = escape_html(index_page_url(config, 1, pagination.per_page))
-    previous_url = escape_html(index_page_url(config, pagination.page - 1, pagination.per_page))
-    next_url = escape_html(index_page_url(config, pagination.page + 1, pagination.per_page))
-    last_url = escape_html(index_page_url(config, pagination.total_pages, pagination.per_page))
+    first_url = escape_html(index_page_url(config, 1, pagination.per_page, selected_tag))
+    previous_url = escape_html(index_page_url(config, pagination.page - 1, pagination.per_page, selected_tag))
+    next_url = escape_html(index_page_url(config, pagination.page + 1, pagination.per_page, selected_tag))
+    last_url = escape_html(index_page_url(config, pagination.total_pages, pagination.per_page, selected_tag))
+    tag_input = (
+        ""
+        if selected_tag is None
+        else f'<input type="hidden" name="tag" value="{escape_html(selected_tag)}">'
+    )
 
     return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-end gap-2">
           <form class="entry-pager-form" method="get">
             <input type="hidden" name="page" value="1">
+            {tag_input}
             <label class="form-label small text-secondary mb-1">Entries per page</label>
             <select class="form-select form-select-sm" name="per_page" aria-label="Entries per page" onchange="this.form.submit()">
               {selected_options}
@@ -634,13 +701,11 @@ def render_index_pagination_controls(config: AppConfig, pagination: Pagination) 
         </div>"""
 
 
-def index_page_url(config: AppConfig, page: int, per_page: int) -> str:
-    return absolute_url(
-        "index",
-        config,
-        page=str(max(page, 1)),
-        per_page=str(per_page),
-    )
+def index_page_url(config: AppConfig, page: int, per_page: int, tag: str | None = None) -> str:
+    values = {"page": str(max(page, 1)), "per_page": str(per_page)}
+    if tag:
+        values["tag"] = tag
+    return absolute_url("index", config, **values)
 
 
 def podcast_page_url(config: AppConfig, podcast: Podcast, page: int, per_page: int) -> str:
@@ -728,6 +793,7 @@ def scan_podcast_candidates(config: AppConfig) -> list[Path]:
 
 
 def build_podcast(config: AppConfig, path: Path) -> Podcast:
+    tags = read_podcast_info_tags(path)
     return Podcast(
         id=podcast_id(path),
         path=path,
@@ -735,7 +801,116 @@ def build_podcast(config: AppConfig, path: Path) -> Podcast:
         description=f"{config.description} ({path.name})",
         image_path=find_podcast_image(path),
         show_info=find_podcast_show_info(config, path),
+        tags=tags,
     )
+
+
+def filter_podcast_paths_by_tag(paths: list[Path], selected_tag: str | None) -> list[Path]:
+    if selected_tag is None:
+        return paths
+    return [path for path in paths if selected_tag in read_podcast_info_tags(path)]
+
+
+def collect_podcast_tags(paths: list[Path]) -> tuple[str, ...]:
+    tags = {
+        tag
+        for path in paths
+        for tag in read_podcast_info_tags(path)
+    }
+    return tuple(sorted(tags, key=str.casefold))
+
+
+def read_podcast_info_tags(podcast_path: Path) -> tuple[str, ...]:
+    info_path = podcast_path / PODCAST_INFO_FILENAME
+    try:
+        mtime_ns = info_path.stat().st_mtime_ns
+    except OSError:
+        mtime_ns = None
+
+    cached = PODCAST_INFO_CACHE.get(info_path)
+    if cached and cached[0] == mtime_ns:
+        return cached[1]
+
+    if mtime_ns is None:
+        tags: tuple[str, ...] = ()
+    else:
+        try:
+            tags = parse_info_yaml_tags(info_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            tags = ()
+
+    PODCAST_INFO_CACHE[info_path] = (mtime_ns, tags)
+    return tags
+
+
+def parse_info_yaml_tags(text: str) -> tuple[str, ...]:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = re.match(r"^tags\s*:\s*(?P<value>.*)$", stripped)
+        if not match:
+            continue
+
+        raw_value = strip_yaml_comment(match.group("value")).strip()
+        if raw_value:
+            return normalize_tags(parse_inline_tags(raw_value))
+
+        list_items: list[str] = []
+        base_indent = len(line) - len(line.lstrip(" "))
+        for child in lines[index + 1:]:
+            child_stripped = child.strip()
+            if not child_stripped or child_stripped.startswith("#"):
+                continue
+            child_indent = len(child) - len(child.lstrip(" "))
+            if child_indent <= base_indent:
+                break
+            if child_stripped.startswith("-"):
+                list_items.append(strip_yaml_comment(child_stripped[1:]).strip())
+        return normalize_tags(list_items)
+
+    return ()
+
+
+def parse_inline_tags(raw_value: str) -> list[str]:
+    if raw_value.startswith("[") and raw_value.endswith("]"):
+        raw_value = raw_value[1:-1]
+    if "," in raw_value:
+        return [part.strip() for part in raw_value.split(",")]
+    return [raw_value]
+
+
+def normalize_tags(values: list[str]) -> tuple[str, ...]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        tag = unquote_yaml_scalar(value)
+        if not tag:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        tags.append(tag)
+    return tuple(tags)
+
+
+def strip_yaml_comment(value: str) -> str:
+    quote: str | None = None
+    for index, char in enumerate(value):
+        if char in {"'", '"'}:
+            quote = None if quote == char else char if quote is None else quote
+        elif char == "#" and quote is None:
+            return value[:index]
+    return value
+
+
+def unquote_yaml_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value.strip()
 
 
 def find_podcast_show_info(config: AppConfig, podcast_path: Path) -> str | None:

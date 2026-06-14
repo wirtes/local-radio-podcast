@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 import re
@@ -403,6 +404,75 @@ root_directory = "{library_dir}"
             self.assertIn("Page 1 of 1", large_html)
             self.assertIn('<option value="25" selected>25</option>', large_html)
             self.assertIn("Show 12", large_html)
+
+    def test_index_displays_filters_and_caches_info_yaml_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            blue_dir = library_dir / "Blue Show"
+            red_dir = library_dir / "Red Show"
+            plain_dir = library_dir / "Plain Show"
+            blue_dir.mkdir(parents=True)
+            red_dir.mkdir()
+            plain_dir.mkdir()
+            (blue_dir / "2026-06-01 Blue Show.mp3").write_bytes(b"audio")
+            (red_dir / "2026-06-01 Red Show.mp3").write_bytes(b"audio")
+            (plain_dir / "2026-06-01 Plain Show.mp3").write_bytes(b"audio")
+            (blue_dir / "_info.yaml").write_text('tags: ["Music", "Local"]\n', encoding="utf-8")
+            red_info = red_dir / "_info.yaml"
+            red_info.write_text("tags:\n  - News\n  - Local\n", encoding="utf-8")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            app_module.PODCAST_INFO_CACHE.clear()
+            flask_app = create_app(config)
+            client = flask_app.test_client()
+
+            with patch("app.parse_info_yaml_tags", wraps=app_module.parse_info_yaml_tags) as parse_tags:
+                index_response = client.get("/")
+                self.assertEqual(parse_tags.call_count, 2)
+                index_html = index_response.data.decode()
+                self.assertIn("All tags", index_html)
+                self.assertIn("Music", index_html)
+                self.assertIn("News", index_html)
+                self.assertIn("Local", index_html)
+                self.assertIn("Blue Show", index_html)
+                self.assertIn("Red Show", index_html)
+                self.assertIn("Plain Show", index_html)
+
+                music_response = client.get("/?tag=Music")
+                self.assertEqual(parse_tags.call_count, 2)
+                music_html = music_response.data.decode()
+                self.assertIn("Showing 1-1 of 1 podcast", music_html)
+                self.assertIn("Blue Show", music_html)
+                self.assertNotIn("Red Show", music_html)
+                self.assertNotIn("Plain Show", music_html)
+
+                red_info.write_text("tags:\n  - Talk\n", encoding="utf-8")
+                next_mtime = red_info.stat().st_mtime_ns + 1_000_000_000
+                os.utime(red_info, ns=(next_mtime, next_mtime))
+
+                talk_response = client.get("/?tag=Talk")
+                self.assertEqual(parse_tags.call_count, 3)
+                talk_html = talk_response.data.decode()
+                self.assertIn("Talk", talk_html)
+                self.assertIn("Red Show", talk_html)
+                self.assertNotIn("Blue Show", talk_html)
 
     def test_filename_date_sets_pubdate_and_sort_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
