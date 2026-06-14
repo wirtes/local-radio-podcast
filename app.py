@@ -275,10 +275,13 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         podcast = find_podcast(config, podcast_id)
         if podcast is None:
             abort(404)
-        episodes = scan_episodes(config, podcast)
+        episode_paths = scan_episode_paths(podcast)
         per_page = parse_per_page(request.args.get("per_page"))
         page = parse_page(request.args.get("page"))
-        body = build_podcast_html(config, podcast, episodes, page=page, per_page=per_page)
+        pagination = paginate(len(episode_paths), page, per_page)
+        visible_paths = episode_paths[pagination.start_index:pagination.end_index]
+        episodes = [read_episode(path, config) for path in visible_paths]
+        body = build_podcast_html(config, podcast, episodes, pagination=pagination)
         return Response(body, mimetype="text/html")
 
     @app.get("/podcasts/<podcast_id>/audio/<episode_id>.mp3")
@@ -412,13 +415,17 @@ def build_podcast_html(
     *,
     page: int = 1,
     per_page: int = DEFAULT_ENTRIES_PER_PAGE,
+    pagination: Pagination | None = None,
 ) -> str:
     title = escape_html(podcast.title)
     description = escape_html(podcast.description)
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
-    pagination = paginate(len(episodes), page, per_page)
-    visible_episodes = episodes[pagination.start_index:pagination.end_index]
+    if pagination is None:
+        pagination = paginate(len(episodes), page, per_page)
+        visible_episodes = episodes[pagination.start_index:pagination.end_index]
+    else:
+        visible_episodes = episodes
     episode_cards = "\n".join(render_episode_card(config, podcast, episode) for episode in visible_episodes)
     pagination_html = render_pagination_controls(config, podcast, pagination)
     show_info_html = render_show_info(podcast)
@@ -494,7 +501,7 @@ def build_podcast_html(
           <dt class="col-sm-3">Author</dt>
           <dd class="col-sm-9">{escape_html(config.author)}</dd>
           <dt class="col-sm-3">Episodes</dt>
-          <dd class="col-sm-9">{len(episodes)}</dd>
+          <dd class="col-sm-9">{pagination.total_items}</dd>
         </dl>
       </div>
     </section>
@@ -793,6 +800,19 @@ def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
 
 
+def scan_episode_paths(podcast: Podcast) -> list[Path]:
+    return sorted(find_mp3_files(podcast.path), key=episode_path_sort_key, reverse=True)
+
+
+def episode_path_sort_key(path: Path) -> tuple[datetime, str]:
+    try:
+        fallback_mtime = path.stat().st_mtime
+    except OSError:
+        fallback_mtime = 0
+    filename_metadata = read_filename_metadata(path)
+    return (parse_pubdate(filename_metadata.get("date"), fallback_mtime), str(path).lower())
+
+
 def has_mp3_file(root: Path) -> bool:
     seen_dirs: set[Path] = set()
 
@@ -849,10 +869,10 @@ def find_mp3_files(root: Path) -> list[Path]:
     return sorted(results, key=lambda path: str(path).lower())
 
 
-def find_episode(config: AppConfig, podcast: Podcast, episode_id: str) -> Episode | None:
-    for episode in scan_episodes(config, podcast):
-        if episode.id == episode_id:
-            return episode
+def find_episode(config: AppConfig, podcast: Podcast, episode_id_value: str) -> Episode | None:
+    for path in find_mp3_files(podcast.path):
+        if episode_id(path) == episode_id_value:
+            return read_episode(path, config)
     return None
 
 

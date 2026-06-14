@@ -294,7 +294,7 @@ root_directory = "{library_dir}"
                 encoding="utf-8",
             )
 
-            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()) as mutagen_file:
                 flask_app = create_app(config)
                 client = flask_app.test_client()
                 index_response = client.get("/")
@@ -314,6 +314,7 @@ root_directory = "{library_dir}"
                 self.assertIn("2026-06-03 Modern Jetset", first_html)
                 self.assertNotIn("2026-06-02 Modern Jetset", first_html)
                 self.assertEqual(first_html.count('<article class="card episode-card'), 10)
+                self.assertEqual(mutagen_file.call_count, 10)
 
                 second_page = client.get(f"{detail_path}?page=2&per_page=10")
                 second_html = second_page.data.decode()
@@ -322,6 +323,7 @@ root_directory = "{library_dir}"
                 self.assertIn("2026-06-02 Modern Jetset", second_html)
                 self.assertIn("2026-06-01 Modern Jetset", second_html)
                 self.assertNotIn("2026-06-03 Modern Jetset", second_html)
+                self.assertEqual(mutagen_file.call_count, 12)
 
                 large_page = client.get(f"{detail_path}?per_page=25")
                 large_html = large_page.data.decode()
