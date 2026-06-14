@@ -22,6 +22,8 @@ ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ATOM_NS = "http://www.w3.org/2005/Atom"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 FILENAME_DATE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:\s+(?P<title>.+))?$")
+EPISODES_PER_PAGE_OPTIONS = (10, 25, 50, 100)
+DEFAULT_EPISODES_PER_PAGE = 10
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("atom", ATOM_NS)
@@ -259,7 +261,9 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         if podcast is None:
             abort(404)
         episodes = scan_episodes(config, podcast)
-        body = build_podcast_html(config, podcast, episodes)
+        per_page = parse_per_page(request.args.get("per_page"))
+        page = parse_page(request.args.get("page"))
+        body = build_podcast_html(config, podcast, episodes, page=page, per_page=per_page)
         return Response(body, mimetype="text/html")
 
     @app.get("/podcasts/<podcast_id>/audio/<episode_id>.mp3")
@@ -376,12 +380,32 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
       </div>"""
 
 
-def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episode]) -> str:
+@dataclass(frozen=True)
+class Pagination:
+    page: int
+    per_page: int
+    total_items: int
+    total_pages: int
+    start_index: int
+    end_index: int
+
+
+def build_podcast_html(
+    config: AppConfig,
+    podcast: Podcast,
+    episodes: list[Episode],
+    *,
+    page: int = 1,
+    per_page: int = DEFAULT_EPISODES_PER_PAGE,
+) -> str:
     title = escape_html(podcast.title)
     description = escape_html(podcast.description)
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
-    episode_cards = "\n".join(render_episode_card(config, podcast, episode) for episode in episodes)
+    pagination = paginate(len(episodes), page, per_page)
+    visible_episodes = episodes[pagination.start_index:pagination.end_index]
+    episode_cards = "\n".join(render_episode_card(config, podcast, episode) for episode in visible_episodes)
+    pagination_html = render_pagination_controls(config, podcast, pagination)
     show_info_html = render_show_info(podcast)
 
     if image_url:
@@ -429,6 +453,9 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
     .episode-info-body {{
       white-space: pre-wrap;
     }}
+    .episode-pager-form {{
+      max-width: 13rem;
+    }}
   </style>
 </head>
 <body>
@@ -457,15 +484,104 @@ def build_podcast_html(config: AppConfig, podcast: Podcast, episodes: list[Episo
       </div>
     </section>
     <section>
-      <h2 class="h4 mb-3">Episodes</h2>
+      <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3 mb-3">
+        <div>
+          <h2 class="h4 mb-1">Episodes</h2>
+          <div class="text-secondary small">{render_pagination_summary(pagination)}</div>
+        </div>
+        {pagination_html}
+      </div>
       <div class="vstack gap-3">
 {episode_cards}
       </div>
+      {pagination_html}
     </section>
   </main>
 </body>
 </html>
 """
+
+
+def parse_per_page(raw_value: str | None) -> int:
+    try:
+        value = int(raw_value or "")
+    except ValueError:
+        return DEFAULT_EPISODES_PER_PAGE
+    if value in EPISODES_PER_PAGE_OPTIONS:
+        return value
+    return DEFAULT_EPISODES_PER_PAGE
+
+
+def parse_page(raw_value: str | None) -> int:
+    try:
+        value = int(raw_value or "")
+    except ValueError:
+        return 1
+    return max(value, 1)
+
+
+def paginate(total_items: int, page: int, per_page: int) -> Pagination:
+    total_pages = max((total_items + per_page - 1) // per_page, 1)
+    current_page = min(max(page, 1), total_pages)
+    start_index = (current_page - 1) * per_page
+    end_index = min(start_index + per_page, total_items)
+    return Pagination(
+        page=current_page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=total_pages,
+        start_index=start_index,
+        end_index=end_index,
+    )
+
+
+def render_pagination_summary(pagination: Pagination) -> str:
+    if pagination.total_items == 0:
+        return "No episodes"
+    start = pagination.start_index + 1
+    return (
+        f"Showing {start}-{pagination.end_index} of {pagination.total_items} "
+        f"episodes"
+    )
+
+
+def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: Pagination) -> str:
+    selected_options = "\n".join(
+        f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
+        for option in EPISODES_PER_PAGE_OPTIONS
+    )
+    previous_disabled = " disabled" if pagination.page <= 1 else ""
+    next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
+    previous_url = escape_html(podcast_page_url(config, podcast, pagination.page - 1, pagination.per_page))
+    next_url = escape_html(podcast_page_url(config, podcast, pagination.page + 1, pagination.per_page))
+
+    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
+          <form class="episode-pager-form" method="get">
+            <input type="hidden" name="page" value="1">
+            <label class="form-label small text-secondary mb-1">Entries per page</label>
+            <select class="form-select form-select-sm" name="per_page" aria-label="Entries per page" onchange="this.form.submit()">
+              {selected_options}
+            </select>
+            <noscript><button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Apply</button></noscript>
+          </form>
+          <nav aria-label="Episode pages">
+            <ul class="pagination pagination-sm mb-0">
+              <li class="page-item{previous_disabled}"><a class="page-link" href="{previous_url}" aria-label="Previous page">Previous</a></li>
+              <li class="page-item disabled"><span class="page-link">Page {pagination.page} of {pagination.total_pages}</span></li>
+              <li class="page-item{next_disabled}"><a class="page-link" href="{next_url}" aria-label="Next page">Next</a></li>
+            </ul>
+          </nav>
+        </div>"""
+
+
+def podcast_page_url(config: AppConfig, podcast: Podcast, page: int, per_page: int) -> str:
+    return absolute_url(
+        "podcast_page",
+        config,
+        podcast_id=podcast.id,
+        page=str(max(page, 1)),
+        per_page=str(per_page),
+    )
 
 
 def render_show_info(podcast: Podcast) -> str:

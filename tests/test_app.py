@@ -267,6 +267,70 @@ root_directory = "{library_dir}"
                 short_info_index = detail_html.index("Guest host: DJ Luz")
                 self.assertLess(detail_html.index("Album", short_title_index), short_info_index)
 
+    def test_podcast_page_paginates_episodes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Modern Jetset"
+            podcast_dir.mkdir(parents=True)
+            for day in range(1, 13):
+                (podcast_dir / f"2026-06-{day:02d} Modern Jetset.mp3").write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                detail_path = self._first_link_for(index_response.data.decode(), "Modern Jetset")
+
+                first_page = client.get(detail_path)
+                self.assertEqual(first_page.status_code, 200)
+                first_html = first_page.data.decode()
+                self.assertIn("Showing 1-10 of 12 episodes", first_html)
+                self.assertIn("Page 1 of 2", first_html)
+                self.assertIn('name="per_page"', first_html)
+                self.assertIn('<option value="10" selected>10</option>', first_html)
+                self.assertIn('<option value="25">25</option>', first_html)
+                self.assertIn("2026-06-12 Modern Jetset", first_html)
+                self.assertIn("2026-06-03 Modern Jetset", first_html)
+                self.assertNotIn("2026-06-02 Modern Jetset", first_html)
+
+                second_page = client.get(f"{detail_path}?page=2&per_page=10")
+                second_html = second_page.data.decode()
+                self.assertIn("Showing 11-12 of 12 episodes", second_html)
+                self.assertIn("Page 2 of 2", second_html)
+                self.assertIn("2026-06-02 Modern Jetset", second_html)
+                self.assertIn("2026-06-01 Modern Jetset", second_html)
+                self.assertNotIn("2026-06-03 Modern Jetset", second_html)
+
+                large_page = client.get(f"{detail_path}?per_page=25")
+                large_html = large_page.data.decode()
+                self.assertIn("Showing 1-12 of 12 episodes", large_html)
+                self.assertIn("Page 1 of 1", large_html)
+                self.assertIn('<option value="25" selected>25</option>', large_html)
+                self.assertIn("2026-06-01 Modern Jetset", large_html)
+
+                invalid_page = client.get(f"{detail_path}?page=-5&per_page=13")
+                invalid_html = invalid_page.data.decode()
+                self.assertIn("Showing 1-10 of 12 episodes", invalid_html)
+                self.assertIn('<option value="10" selected>10</option>', invalid_html)
+
     def test_filename_date_sets_pubdate_and_sort_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
