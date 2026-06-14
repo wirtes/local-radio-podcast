@@ -93,6 +93,22 @@ artist.jpg
 It skips any podcast directory that already has a top-level `.jpg` file. It searches MP3s recursively, so artwork inside year subdirectories is fine.
 If no flag is specified, it prints usage and does not change files.
 
+## Create Show Info Stubs
+
+Create missing `_info.yaml` files for podcast folders:
+
+```sh
+.venv/bin/python scripts/create_info_yaml.py --config config.toml
+```
+
+Preview without writing:
+
+```sh
+.venv/bin/python scripts/create_info_yaml.py --config config.toml --dry-run
+```
+
+Existing `_info.yaml` files are left unchanged.
+
 ## Repair MP3 Tags
 
 Apple Podcasts may display the RSS feed correctly while iPod sync still reads stale embedded MP3 tags.

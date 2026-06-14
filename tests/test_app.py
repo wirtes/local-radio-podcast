@@ -22,6 +22,7 @@ from app import (
     repair_mp3_tags,
     write_id3_tags,
 )
+from scripts.create_info_yaml import create_missing_info_files
 
 
 class FakeInfo:
@@ -122,6 +123,7 @@ root_directory = "{library_dir}"
                 self._assert_uncached(index_response)
                 self.assertIn(b"Kitchen Radio", index_response.data)
                 self.assertIn(b"Evening News", index_response.data)
+                self.assertIn(b'<h1 class="display-6 mb-2"><a class="home-title-link"', index_response.data)
                 self.assertIn(b"podcast-card", index_response.data)
                 self.assertIn(b"card-img-top podcast-cover", index_response.data)
                 self.assertIn(b"feed-url-", index_response.data)
@@ -455,6 +457,12 @@ root_directory = "{library_dir}"
                 self.assertIn("Red Show", index_html)
                 self.assertIn("Plain Show", index_html)
 
+                sized_response = client.get("/?per_page=25")
+                sized_html = sized_response.data.decode()
+                self.assertIn("/?page=1&amp;per_page=25&amp;tag=Music", sized_html)
+                self.assertIn("/?page=1&amp;per_page=25&amp;tag=News", sized_html)
+                self.assertNotIn("/?page=1&amp;per_page=10&amp;tag=Music", sized_html)
+
                 music_response = client.get("/?tag=Music")
                 self.assertEqual(parse_tags.call_count, 2)
                 music_html = music_response.data.decode()
@@ -473,6 +481,65 @@ root_directory = "{library_dir}"
                 self.assertIn("Talk", talk_html)
                 self.assertIn("Red Show", talk_html)
                 self.assertNotIn("Blue Show", talk_html)
+
+    def test_create_info_yaml_script_creates_missing_stubs_only_for_podcasts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            missing_dir = library_dir / "Missing Info Show"
+            existing_dir = library_dir / "Existing Info Show"
+            empty_dir = library_dir / "Empty Show"
+            missing_dir.mkdir(parents=True)
+            existing_dir.mkdir()
+            empty_dir.mkdir()
+            (missing_dir / "2026-06-01 Missing Info Show.mp3").write_bytes(b"audio")
+            (existing_dir / "2026-06-01 Existing Info Show.mp3").write_bytes(b"audio")
+            existing_info = existing_dir / "_info.yaml"
+            existing_info.write_text("show: Existing Info Show\nstation: KVCU\n", encoding="utf-8")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            resolved_missing_info = (missing_dir / "_info.yaml").resolve()
+            resolved_existing_info = existing_info.resolve()
+            dry_run = create_missing_info_files(config, dry_run=True)
+            self.assertIn(f"DRY {resolved_missing_info}", dry_run)
+            self.assertFalse((missing_dir / "_info.yaml").exists())
+
+            results = create_missing_info_files(config)
+            self.assertIn(f"CREATE {resolved_missing_info}", results)
+            self.assertIn(f"SKIP exists: {resolved_existing_info}", results)
+            self.assertFalse((empty_dir / "_info.yaml").exists())
+            self.assertEqual(
+                (missing_dir / "_info.yaml").read_text(encoding="utf-8"),
+                """show: Missing Info Show
+station: TBD
+
+tags:
+  - To Be Cataloged
+
+notes: |
+  Free text.
+""",
+            )
+            self.assertEqual(
+                existing_info.read_text(encoding="utf-8"),
+                "show: Existing Info Show\nstation: KVCU\n",
+            )
 
     def test_filename_date_sets_pubdate_and_sort_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -892,14 +959,19 @@ root_directory = "{library_dir}"
 
     def _first_link_for(self, html: str, title: str) -> str:
         match = re.search(
-            rf'<a[^>]+href="http://127\.0\.0\.1:8000(?P<path>[^"]+)"[^>]*>{re.escape(title)}</a>',
+            rf'<a class="link-dark text-decoration-none" href="http://127\.0\.0\.1:8000(?P<path>[^"]+)">{re.escape(title)}</a>',
             html,
         )
         self.assertIsNotNone(match)
         return match.group("path")
 
     def _feed_input_path_for(self, html: str, title: str) -> str:
-        title_at = html.index(f">{title}</a>")
+        title_match = re.search(
+            rf'<a class="link-dark text-decoration-none" href="http://127\.0\.0\.1:8000[^"]+">{re.escape(title)}</a>',
+            html,
+        )
+        self.assertIsNotNone(title_match)
+        title_at = title_match.start()
         match = re.search(r'<input[^>]+value="http://127\.0\.0\.1:8000(?P<path>[^"]+)"', html[title_at:])
         self.assertIsNotNone(match)
         return match.group("path")

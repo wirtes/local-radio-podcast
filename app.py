@@ -162,9 +162,11 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         pagination = paginate(len(podcast_paths), page, per_page)
         visible_paths = podcast_paths[pagination.start_index:pagination.end_index]
         podcasts = [build_podcast(config, path) for path in visible_paths]
-        podcast_cards = "\n".join(render_podcast_card(config, podcast) for podcast in podcasts)
+        podcast_cards = "\n".join(
+            render_podcast_card(config, podcast, per_page) for podcast in podcasts
+        )
         pagination_html = render_index_pagination_controls(config, pagination, selected_tag)
-        tag_filter_html = render_tag_filters(config, available_tags, selected_tag)
+        tag_filter_html = render_tag_filters(config, available_tags, selected_tag, per_page)
         body = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -220,12 +222,16 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     .entry-pager-form {{
       max-width: 13rem;
     }}
+    .home-title-link {{
+      color: inherit;
+      text-decoration: none;
+    }}
   </style>
 </head>
 <body>
   <main class="container py-4 py-md-5">
     <div class="mb-4">
-      <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
+      <h1 class="display-6 mb-2"><a class="home-title-link" href="{escape_html(absolute_url("index", config))}">{escape_html(config.title)}</a></h1>
       <p class="lead text-secondary mb-0">{escape_html(config.description)}</p>
     </div>
     {tag_filter_html}
@@ -367,7 +373,7 @@ def cache_artwork_response(response: Response) -> Response:
     return response
 
 
-def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
+def render_podcast_card(config: AppConfig, podcast: Podcast, per_page: int = DEFAULT_ENTRIES_PER_PAGE) -> str:
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     page_url = absolute_url("podcast_page", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
@@ -376,7 +382,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
     title = escape_html(podcast.title)
     escaped_feed_url = escape_html(feed_url)
     escaped_page_url = escape_html(page_url)
-    tags_html = render_podcast_tags(config, podcast.tags)
+    tags_html = render_podcast_tags(config, podcast.tags, per_page)
 
     if image_url:
         cover_html = (
@@ -417,11 +423,11 @@ def render_podcast_card(config: AppConfig, podcast: Podcast) -> str:
       </div>"""
 
 
-def render_podcast_tags(config: AppConfig, tags: tuple[str, ...]) -> str:
+def render_podcast_tags(config: AppConfig, tags: tuple[str, ...], per_page: int) -> str:
     if not tags:
         return '<div class="podcast-tags mb-2"></div>'
     tag_links = "\n".join(
-        f'<a class="badge rounded-pill text-bg-light border text-secondary text-decoration-none podcast-tag" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, tag))}">{escape_html(tag)}</a>'
+        f'<a class="badge rounded-pill text-bg-light border text-secondary text-decoration-none podcast-tag" href="{escape_html(index_page_url(config, 1, per_page, tag))}">{escape_html(tag)}</a>'
         for tag in tags
     )
     return f"""<div class="podcast-tags d-flex flex-wrap gap-1 mb-2">
@@ -604,18 +610,23 @@ def parse_tag_filter(raw_value: str | None) -> str | None:
     return value or None
 
 
-def render_tag_filters(config: AppConfig, tags: tuple[str, ...], selected_tag: str | None) -> str:
+def render_tag_filters(
+    config: AppConfig,
+    tags: tuple[str, ...],
+    selected_tag: str | None,
+    per_page: int,
+) -> str:
     if not tags:
         return ""
 
     all_class = "btn-secondary" if selected_tag is None else "btn-outline-secondary"
     tag_buttons = [
-        f'<a class="btn btn-sm {all_class}" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, None))}">All tags</a>'
+        f'<a class="btn btn-sm {all_class}" href="{escape_html(index_page_url(config, 1, per_page, None))}">All tags</a>'
     ]
     for tag in tags:
         button_class = "btn-secondary" if tag == selected_tag else "btn-outline-secondary"
         tag_buttons.append(
-            f'<a class="btn btn-sm {button_class}" href="{escape_html(index_page_url(config, 1, DEFAULT_ENTRIES_PER_PAGE, tag))}">{escape_html(tag)}</a>'
+            f'<a class="btn btn-sm {button_class}" href="{escape_html(index_page_url(config, 1, per_page, tag))}">{escape_html(tag)}</a>'
         )
 
     return f"""<section class="mb-4" aria-label="Filter podcasts by tag">
