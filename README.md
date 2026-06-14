@@ -95,7 +95,7 @@ If no flag is specified, it prints usage and does not change files.
 
 ## Create Show Info Stubs
 
-Create missing `_info.yaml` files for podcast folders:
+Create missing `_info.yaml` files for podcast folders. Run this through the project virtualenv so the script can import the app dependencies:
 
 ```sh
 .venv/bin/python scripts/create_info_yaml.py --config config.toml
@@ -108,6 +108,21 @@ Preview without writing:
 ```
 
 Existing `_info.yaml` files are left unchanged.
+
+The generated file looks like this:
+
+```yaml
+show: Morning Show
+station: TBD
+
+tags:
+  - To Be Cataloged
+
+notes: |
+  Free text.
+```
+
+Tags from `_info.yaml` appear on the homepage and can be used to filter the podcast list.
 
 ## Repair MP3 Tags
 
@@ -214,6 +229,12 @@ port = 8000
 root_directory = "/path/to/your/podcast/root"
 ```
 
+Create missing show metadata stubs:
+
+```sh
+.venv/bin/python scripts/create_info_yaml.py --config config.toml
+```
+
 Test it manually:
 
 ```sh
@@ -286,6 +307,8 @@ sudo ufw allow 8000/tcp
 
 - Every immediate directory inside `feed.root_directory` is exposed as a separate podcast.
 - Hidden folders, virtualenv/cache folders, and folders without any `.mp3` files are ignored.
+- Podcast folders can include `_info.yaml` metadata. Homepage tags are read from its `tags` section.
+- Parsed `_info.yaml` tags are cached by the file's modified time and refreshed when the file changes.
 - Each podcast recursively scans its own directory and year subdirectories for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.
