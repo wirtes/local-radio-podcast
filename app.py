@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import hashlib
 import mimetypes
 import os
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
-from flask import Flask, Response, abort, request, send_file, url_for
+from flask import Flask, Response, abort, redirect, request, send_file, session, url_for
 from mutagen import File as MutagenFile
 from mutagen.id3 import COMM, ID3, TALB, TDAT, TDRC, TIT2, TPE1, TRCK, TYER, ID3NoHeaderError
 
@@ -60,6 +61,7 @@ class AppConfig:
     base_url: str | None
     host: str
     port: int
+    main_page_password: str | None
 
 
 @dataclass(frozen=True)
@@ -149,6 +151,9 @@ def load_config(path: Path) -> AppConfig:
         base_url=server.get("base_url") or None,
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 8000)),
+        main_page_password=os.environ.get("MAIN_PAGE_PASSWORD")
+        or server.get("main_page_password")
+        or None,
     )
 
 
@@ -158,6 +163,10 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     app = Flask(__name__)
     app.config["PODCAST_CONFIG"] = config
+    if config.main_page_password:
+        app.secret_key = os.environ.get("FLASK_SECRET_KEY") or hashlib.sha256(
+            f"{path}:{config.main_page_password}".encode("utf-8")
+        ).hexdigest()
 
     @app.after_request
     def add_no_cache_headers(response: Response) -> Response:
@@ -165,8 +174,17 @@ def create_app(config_path: str | Path | None = None) -> Flask:
             return cache_artwork_response(response)
         return no_cache_response(response)
 
-    @app.get("/")
+    @app.route("/", methods=["GET", "POST"])
     def index() -> Response:
+        if not is_main_page_unlocked(config):
+            if request.method == "POST":
+                submitted_password = request.form.get("password", "")
+                if hmac.compare_digest(submitted_password, config.main_page_password or ""):
+                    session["main_page_unlocked"] = True
+                    return redirect(absolute_url("index", config))
+                return Response(render_password_page(config, failed=True), mimetype="text/html", status=401)
+            return Response(render_password_page(config), mimetype="text/html", status=401)
+
         selected_tag = parse_tag_filter(request.args.get("tag"))
         all_podcast_paths = scan_podcast_paths(config)
         podcast_paths = filter_podcast_paths_by_tag(all_podcast_paths, selected_tag)
@@ -298,6 +316,10 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 """
         return Response(body, mimetype="text/html")
 
+    @app.get("/robots.txt")
+    def robots_txt() -> Response:
+        return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
+
     @app.get("/podcasts/<podcast_id>/feed.xml")
     def feed(podcast_id: str) -> Response:
         podcast = find_podcast(config, podcast_id)
@@ -385,6 +407,52 @@ def cache_artwork_response(response: Response) -> Response:
     response.headers.pop("Pragma", None)
     response.headers.pop("Expires", None)
     return response
+
+
+def is_main_page_unlocked(config: AppConfig) -> bool:
+    if not config.main_page_password:
+        return True
+    return session.get("main_page_unlocked") is True
+
+
+def render_password_page(config: AppConfig, failed: bool = False) -> str:
+    error_html = (
+        '<div class="alert alert-danger py-2" role="alert">Incorrect password.</div>'
+        if failed
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape_html(config.title)}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {{
+      background: #f6f7f9;
+    }}
+    .unlock-panel {{
+      max-width: 24rem;
+    }}
+  </style>
+</head>
+<body>
+  <main class="container py-5">
+    <div class="unlock-panel">
+      <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
+      <p class="text-secondary mb-4">{escape_html(config.description)}</p>
+      {error_html}
+      <form method="post">
+        <label class="form-label" for="main-page-password">Password</label>
+        <input id="main-page-password" class="form-control mb-3" type="password" name="password" autocomplete="current-password" autofocus>
+        <button class="btn btn-primary" type="submit">Enter</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>
+"""
 
 
 def render_podcast_card(config: AppConfig, podcast: Podcast, per_page: int = DEFAULT_ENTRIES_PER_PAGE) -> str:

@@ -4,6 +4,9 @@
 base_url = "http://YOUR_LAN_IP:8000"
 host = "0.0.0.0"
 port = 8000
+# Optional: require a simple shared password only for the main listing page.
+# Podcast detail pages, RSS feeds, audio downloads, and cover images remain public.
+# main_page_password = "change-me"
 
 [feed]
 title = "Local MP3 Podcasts"

@@ -16,6 +16,7 @@ Edit `config.toml`:
 - Set `server.base_url` to this computer's LAN URL, such as `http://192.168.1.25:8000`.
 - Set `feed.root_directory` to the folder that contains your podcast folders.
 - Adjust the library title, description, and author.
+- Optionally set `server.main_page_password` to require a shared password for the homepage only.
 
 Every immediate directory inside `feed.root_directory` becomes a separate podcast. For example:
 
@@ -50,6 +51,8 @@ http://YOUR_LAN_IP:8000/
 ```
 
 The homepage shows podcast cards. Click a podcast title to open a pretty HTML episode page with audio players, or copy the raw `feed.xml` URL from the card.
+
+If `server.main_page_password` is set, the homepage prompts for that password. Podcast detail pages, RSS feeds, audio files, and cover images stay reachable so podcast clients continue to work.
 
 ## Subscribe in Apple Podcasts
 
@@ -309,6 +312,8 @@ sudo ufw allow 8000/tcp
 - Hidden folders, virtualenv/cache folders, and folders without any `.mp3` files are ignored.
 - Podcast folders can include `_info.yaml` metadata. Homepage tags are read from its `tags` section.
 - Parsed `_info.yaml` tags are cached by the file's modified time and refreshed when the file changes.
+- If `server.main_page_password` is set, only the homepage is password-protected.
+- `/robots.txt` returns `User-agent: *` and `Disallow: /`.
 - Each podcast recursively scans its own directory and year subdirectories for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.

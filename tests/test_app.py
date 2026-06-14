@@ -271,6 +271,103 @@ root_directory = "{library_dir}"
                 short_info_index = detail_html.index("Guest host: DJ Luz")
                 self.assertLess(detail_html.index("Album", short_title_index), short_info_index)
 
+    def test_main_page_password_protects_only_index(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Kitchen Radio"
+            podcast_dir.mkdir(parents=True)
+            mp3 = podcast_dir / "2026-06-01 Kitchen Radio.mp3"
+            mp3.write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+main_page_password = "secret"
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                podcast_path = f"/podcasts/{app_module.podcast_id(podcast_dir)}/"
+
+                locked_response = client.get("/")
+                self.assertEqual(locked_response.status_code, 401)
+                self.assertIn(b"Password", locked_response.data)
+                self.assertNotIn(b"podcast-card", locked_response.data)
+
+                detail_response = client.get(podcast_path)
+                self.assertEqual(detail_response.status_code, 200)
+                self.assertIn(b"Kitchen Radio", detail_response.data)
+
+                feed_response = client.get(f"{podcast_path}feed.xml")
+                self.assertEqual(feed_response.status_code, 200)
+                rss = ET.fromstring(feed_response.data)
+                enclosure = rss.find("./channel/item/enclosure")
+                self.assertIsNotNone(enclosure)
+
+                audio_response = client.get(enclosure.attrib["url"].replace("http://127.0.0.1:8000", ""))
+                self.assertEqual(audio_response.status_code, 200)
+                self.assertEqual(audio_response.data, mp3.read_bytes())
+                audio_response.close()
+
+                bad_response = client.post("/", data={"password": "wrong"})
+                self.assertEqual(bad_response.status_code, 401)
+                self.assertIn(b"Incorrect password.", bad_response.data)
+
+                unlock_response = client.post("/", data={"password": "secret"})
+                self.assertEqual(unlock_response.status_code, 302)
+
+                unlocked_response = client.get("/")
+                self.assertEqual(unlocked_response.status_code, 200)
+                self.assertIn(b"podcast-card", unlocked_response.data)
+
+    def test_robots_txt_disallows_all(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            podcast_dir = library_dir / "Kitchen Radio"
+            podcast_dir.mkdir(parents=True)
+            (podcast_dir / "2026-06-01 Kitchen Radio.mp3").write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+main_page_password = "secret"
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            flask_app = create_app(config)
+            client = flask_app.test_client()
+
+            response = client.get("/robots.txt")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, "text/plain")
+            self.assertEqual(response.data, b"User-agent: *\nDisallow: /\n")
+
     def test_podcast_page_paginates_episodes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
