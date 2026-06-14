@@ -22,8 +22,9 @@ ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ATOM_NS = "http://www.w3.org/2005/Atom"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 FILENAME_DATE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:\s+(?P<title>.+))?$")
-EPISODES_PER_PAGE_OPTIONS = (10, 25, 50, 100)
-DEFAULT_EPISODES_PER_PAGE = 10
+ENTRIES_PER_PAGE_OPTIONS = (10, 25, 50, 100)
+DEFAULT_ENTRIES_PER_PAGE = 10
+IGNORED_PODCAST_DIRECTORY_NAMES = {"__pycache__", ".venv", "venv", "env", "tests"}
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("atom", ATOM_NS)
@@ -149,8 +150,18 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     @app.get("/")
     def index() -> Response:
-        podcasts = scan_podcasts(config)
+        podcast_candidates = scan_podcast_candidates(config)
+        per_page = parse_per_page(request.args.get("per_page"))
+        page = parse_page(request.args.get("page"))
+        pagination = paginate(len(podcast_candidates), page, per_page)
+        visible_candidates = podcast_candidates[pagination.start_index:pagination.end_index]
+        podcasts = [
+            build_podcast(config, path)
+            for path in visible_candidates
+            if is_podcast_directory(path)
+        ]
         podcast_cards = "\n".join(render_podcast_card(config, podcast) for podcast in podcasts)
+        pagination_html = render_index_pagination_controls(config, pagination)
         body = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -194,6 +205,9 @@ def create_app(config_path: str | Path | None = None) -> Flask:
     .copy-status {{
       min-height: 1rem;
     }}
+    .entry-pager-form {{
+      max-width: 13rem;
+    }}
   </style>
 </head>
 <body>
@@ -202,9 +216,14 @@ def create_app(config_path: str | Path | None = None) -> Flask:
       <h1 class="display-6 mb-2">{escape_html(config.title)}</h1>
       <p class="lead text-secondary mb-0">{escape_html(config.description)}</p>
     </div>
+    <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3 mb-3">
+      <div class="text-secondary small">{render_pagination_summary(pagination, "podcast")}</div>
+      {pagination_html}
+    </div>
     <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-3">
 {podcast_cards}
     </div>
+    {pagination_html}
   </main>
   <script>
     function copyFeedUrl(button) {{
@@ -396,7 +415,7 @@ def build_podcast_html(
     episodes: list[Episode],
     *,
     page: int = 1,
-    per_page: int = DEFAULT_EPISODES_PER_PAGE,
+    per_page: int = DEFAULT_ENTRIES_PER_PAGE,
 ) -> str:
     title = escape_html(podcast.title)
     description = escape_html(podcast.description)
@@ -453,7 +472,7 @@ def build_podcast_html(
     .episode-info-body {{
       white-space: pre-wrap;
     }}
-    .episode-pager-form {{
+    .entry-pager-form {{
       max-width: 13rem;
     }}
   </style>
@@ -487,7 +506,7 @@ def build_podcast_html(
       <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3 mb-3">
         <div>
           <h2 class="h4 mb-1">Episodes</h2>
-          <div class="text-secondary small">{render_pagination_summary(pagination)}</div>
+          <div class="text-secondary small">{render_pagination_summary(pagination, "episode")}</div>
         </div>
         {pagination_html}
       </div>
@@ -506,10 +525,10 @@ def parse_per_page(raw_value: str | None) -> int:
     try:
         value = int(raw_value or "")
     except ValueError:
-        return DEFAULT_EPISODES_PER_PAGE
-    if value in EPISODES_PER_PAGE_OPTIONS:
+        return DEFAULT_ENTRIES_PER_PAGE
+    if value in ENTRIES_PER_PAGE_OPTIONS:
         return value
-    return DEFAULT_EPISODES_PER_PAGE
+    return DEFAULT_ENTRIES_PER_PAGE
 
 
 def parse_page(raw_value: str | None) -> int:
@@ -535,20 +554,21 @@ def paginate(total_items: int, page: int, per_page: int) -> Pagination:
     )
 
 
-def render_pagination_summary(pagination: Pagination) -> str:
+def render_pagination_summary(pagination: Pagination, item_label: str) -> str:
     if pagination.total_items == 0:
-        return "No episodes"
+        return f"No {item_label}s"
     start = pagination.start_index + 1
+    plural_label = item_label if pagination.total_items == 1 else f"{item_label}s"
     return (
         f"Showing {start}-{pagination.end_index} of {pagination.total_items} "
-        f"episodes"
+        f"{plural_label}"
     )
 
 
 def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: Pagination) -> str:
     selected_options = "\n".join(
         f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
-        for option in EPISODES_PER_PAGE_OPTIONS
+        for option in ENTRIES_PER_PAGE_OPTIONS
     )
     previous_disabled = " disabled" if pagination.page <= 1 else ""
     next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
@@ -556,7 +576,7 @@ def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: 
     next_url = escape_html(podcast_page_url(config, podcast, pagination.page + 1, pagination.per_page))
 
     return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
-          <form class="episode-pager-form" method="get">
+          <form class="entry-pager-form" method="get">
             <input type="hidden" name="page" value="1">
             <label class="form-label small text-secondary mb-1">Entries per page</label>
             <select class="form-select form-select-sm" name="per_page" aria-label="Entries per page" onchange="this.form.submit()">
@@ -572,6 +592,44 @@ def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: 
             </ul>
           </nav>
         </div>"""
+
+
+def render_index_pagination_controls(config: AppConfig, pagination: Pagination) -> str:
+    selected_options = "\n".join(
+        f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
+        for option in ENTRIES_PER_PAGE_OPTIONS
+    )
+    previous_disabled = " disabled" if pagination.page <= 1 else ""
+    next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
+    previous_url = escape_html(index_page_url(config, pagination.page - 1, pagination.per_page))
+    next_url = escape_html(index_page_url(config, pagination.page + 1, pagination.per_page))
+
+    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
+          <form class="entry-pager-form" method="get">
+            <input type="hidden" name="page" value="1">
+            <label class="form-label small text-secondary mb-1">Entries per page</label>
+            <select class="form-select form-select-sm" name="per_page" aria-label="Entries per page" onchange="this.form.submit()">
+              {selected_options}
+            </select>
+            <noscript><button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Apply</button></noscript>
+          </form>
+          <nav aria-label="Podcast pages">
+            <ul class="pagination pagination-sm mb-0">
+              <li class="page-item{previous_disabled}"><a class="page-link" href="{previous_url}" aria-label="Previous page">Previous</a></li>
+              <li class="page-item disabled"><span class="page-link">Page {pagination.page} of {pagination.total_pages}</span></li>
+              <li class="page-item{next_disabled}"><a class="page-link" href="{next_url}" aria-label="Next page">Next</a></li>
+            </ul>
+          </nav>
+        </div>"""
+
+
+def index_page_url(config: AppConfig, page: int, per_page: int) -> str:
+    return absolute_url(
+        "index",
+        config,
+        page=str(max(page, 1)),
+        per_page=str(per_page),
+    )
 
 
 def podcast_page_url(config: AppConfig, podcast: Podcast, page: int, per_page: int) -> str:
@@ -644,18 +702,30 @@ def render_episode_info(episode: Episode) -> str:
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:
     podcasts = [
-        Podcast(
-            id=podcast_id(path),
-            path=path,
-            title=path.name,
-            description=f"{config.description} ({path.name})",
-            image_path=find_podcast_image(path),
-            show_info=find_podcast_show_info(config, path),
-        )
-        for path in sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
+        build_podcast(config, path)
+        for path in scan_podcast_candidates(config)
         if is_podcast_directory(path)
     ]
     return podcasts
+
+
+def scan_podcast_candidates(config: AppConfig) -> list[Path]:
+    try:
+        children = sorted(config.root_directory.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+    return [path for path in children if is_visible_podcast_candidate(path)]
+
+
+def build_podcast(config: AppConfig, path: Path) -> Podcast:
+    return Podcast(
+        id=podcast_id(path),
+        path=path,
+        title=path.name,
+        description=f"{config.description} ({path.name})",
+        image_path=find_podcast_image(path),
+        show_info=find_podcast_show_info(config, path),
+    )
 
 
 def find_podcast_show_info(config: AppConfig, podcast_path: Path) -> str | None:
@@ -700,11 +770,17 @@ def find_podcast_image(podcast_path: Path) -> Path | None:
 
 
 def is_podcast_directory(path: Path) -> bool:
-    if not path.is_dir():
-        return False
-    if path.name.startswith(".") or path.name in {"__pycache__", ".venv", "venv", "env"}:
+    if not is_visible_podcast_candidate(path):
         return False
     return any(find_mp3_files(path))
+
+
+def is_visible_podcast_candidate(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if path.name.startswith(".") or path.name in IGNORED_PODCAST_DIRECTORY_NAMES:
+        return False
+    return True
 
 
 def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:

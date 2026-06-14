@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
+import app as app_module
 from mutagen.id3 import ID3, TALB, TDRC, TIT2, TPE1
 
 from app import (
@@ -330,6 +331,68 @@ root_directory = "{library_dir}"
                 invalid_html = invalid_page.data.decode()
                 self.assertIn("Showing 1-10 of 12 episodes", invalid_html)
                 self.assertIn('<option value="10" selected>10</option>', invalid_html)
+
+    def test_index_paginates_podcasts_without_reading_later_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            library_dir.mkdir()
+            for number in range(1, 13):
+                podcast_dir = library_dir / f"Show {number:02d}"
+                podcast_dir.mkdir()
+                (podcast_dir / f"2026-06-{number:02d} Show {number:02d}.mp3").write_bytes(b"audio")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            flask_app = create_app(config)
+            client = flask_app.test_client()
+
+            with patch("app.find_mp3_files", wraps=app_module.find_mp3_files) as find_mp3_files:
+                first_page = client.get("/")
+
+            first_html = first_page.data.decode()
+            self.assertEqual(first_page.status_code, 200)
+            self.assertIn("Showing 1-10 of 12 podcasts", first_html)
+            self.assertIn("Page 1 of 2", first_html)
+            self.assertIn('name="per_page"', first_html)
+            self.assertIn('<option value="10" selected>10</option>', first_html)
+            self.assertIn('<option value="25">25</option>', first_html)
+            self.assertIn("Show 01", first_html)
+            self.assertIn("Show 10", first_html)
+            self.assertNotIn("Show 11", first_html)
+            self.assertNotIn("Show 12", first_html)
+            checked_paths = {call.args[0].name for call in find_mp3_files.call_args_list}
+            self.assertEqual(checked_paths, {f"Show {number:02d}" for number in range(1, 11)})
+
+            second_page = client.get("/?page=2&per_page=10")
+            second_html = second_page.data.decode()
+            self.assertIn("Showing 11-12 of 12 podcasts", second_html)
+            self.assertIn("Page 2 of 2", second_html)
+            self.assertIn("Show 11", second_html)
+            self.assertIn("Show 12", second_html)
+            self.assertNotIn("Show 10", second_html)
+
+            large_page = client.get("/?per_page=25")
+            large_html = large_page.data.decode()
+            self.assertIn("Showing 1-12 of 12 podcasts", large_html)
+            self.assertIn("Page 1 of 1", large_html)
+            self.assertIn('<option value="25" selected>25</option>', large_html)
+            self.assertIn("Show 12", large_html)
 
     def test_filename_date_sets_pubdate_and_sort_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
