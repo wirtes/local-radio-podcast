@@ -150,16 +150,12 @@ def create_app(config_path: str | Path | None = None) -> Flask:
 
     @app.get("/")
     def index() -> Response:
-        podcast_candidates = scan_podcast_candidates(config)
+        podcast_paths = scan_podcast_paths(config)
         per_page = parse_per_page(request.args.get("per_page"))
         page = parse_page(request.args.get("page"))
-        pagination = paginate(len(podcast_candidates), page, per_page)
-        visible_candidates = podcast_candidates[pagination.start_index:pagination.end_index]
-        podcasts = [
-            build_podcast(config, path)
-            for path in visible_candidates
-            if is_podcast_directory(path)
-        ]
+        pagination = paginate(len(podcast_paths), page, per_page)
+        visible_paths = podcast_paths[pagination.start_index:pagination.end_index]
+        podcasts = [build_podcast(config, path) for path in visible_paths]
         podcast_cards = "\n".join(render_podcast_card(config, podcast) for podcast in podcasts)
         pagination_html = render_index_pagination_controls(config, pagination)
         body = f"""<!doctype html>
@@ -572,10 +568,12 @@ def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: 
     )
     previous_disabled = " disabled" if pagination.page <= 1 else ""
     next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
+    first_url = escape_html(podcast_page_url(config, podcast, 1, pagination.per_page))
     previous_url = escape_html(podcast_page_url(config, podcast, pagination.page - 1, pagination.per_page))
     next_url = escape_html(podcast_page_url(config, podcast, pagination.page + 1, pagination.per_page))
+    last_url = escape_html(podcast_page_url(config, podcast, pagination.total_pages, pagination.per_page))
 
-    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
+    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-end gap-2">
           <form class="entry-pager-form" method="get">
             <input type="hidden" name="page" value="1">
             <label class="form-label small text-secondary mb-1">Entries per page</label>
@@ -586,9 +584,11 @@ def render_pagination_controls(config: AppConfig, podcast: Podcast, pagination: 
           </form>
           <nav aria-label="Episode pages">
             <ul class="pagination pagination-sm mb-0">
+              <li class="page-item{previous_disabled}"><a class="page-link" href="{first_url}" aria-label="First page">First</a></li>
               <li class="page-item{previous_disabled}"><a class="page-link" href="{previous_url}" aria-label="Previous page">Previous</a></li>
               <li class="page-item disabled"><span class="page-link">Page {pagination.page} of {pagination.total_pages}</span></li>
               <li class="page-item{next_disabled}"><a class="page-link" href="{next_url}" aria-label="Next page">Next</a></li>
+              <li class="page-item{next_disabled}"><a class="page-link" href="{last_url}" aria-label="Last page">Last</a></li>
             </ul>
           </nav>
         </div>"""
@@ -601,10 +601,12 @@ def render_index_pagination_controls(config: AppConfig, pagination: Pagination) 
     )
     previous_disabled = " disabled" if pagination.page <= 1 else ""
     next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
+    first_url = escape_html(index_page_url(config, 1, pagination.per_page))
     previous_url = escape_html(index_page_url(config, pagination.page - 1, pagination.per_page))
     next_url = escape_html(index_page_url(config, pagination.page + 1, pagination.per_page))
+    last_url = escape_html(index_page_url(config, pagination.total_pages, pagination.per_page))
 
-    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-center gap-2">
+    return f"""<div class="d-flex flex-column flex-sm-row align-items-sm-end gap-2">
           <form class="entry-pager-form" method="get">
             <input type="hidden" name="page" value="1">
             <label class="form-label small text-secondary mb-1">Entries per page</label>
@@ -615,9 +617,11 @@ def render_index_pagination_controls(config: AppConfig, pagination: Pagination) 
           </form>
           <nav aria-label="Podcast pages">
             <ul class="pagination pagination-sm mb-0">
+              <li class="page-item{previous_disabled}"><a class="page-link" href="{first_url}" aria-label="First page">First</a></li>
               <li class="page-item{previous_disabled}"><a class="page-link" href="{previous_url}" aria-label="Previous page">Previous</a></li>
               <li class="page-item disabled"><span class="page-link">Page {pagination.page} of {pagination.total_pages}</span></li>
               <li class="page-item{next_disabled}"><a class="page-link" href="{next_url}" aria-label="Next page">Next</a></li>
+              <li class="page-item{next_disabled}"><a class="page-link" href="{last_url}" aria-label="Last page">Last</a></li>
             </ul>
           </nav>
         </div>"""
@@ -701,12 +705,11 @@ def render_episode_info(episode: Episode) -> str:
 
 
 def scan_podcasts(config: AppConfig) -> list[Podcast]:
-    podcasts = [
-        build_podcast(config, path)
-        for path in scan_podcast_candidates(config)
-        if is_podcast_directory(path)
-    ]
-    return podcasts
+    return [build_podcast(config, path) for path in scan_podcast_paths(config)]
+
+
+def scan_podcast_paths(config: AppConfig) -> list[Path]:
+    return [path for path in scan_podcast_candidates(config) if is_podcast_directory(path)]
 
 
 def scan_podcast_candidates(config: AppConfig) -> list[Path]:
@@ -772,7 +775,7 @@ def find_podcast_image(podcast_path: Path) -> Path | None:
 def is_podcast_directory(path: Path) -> bool:
     if not is_visible_podcast_candidate(path):
         return False
-    return any(find_mp3_files(path))
+    return has_mp3_file(path)
 
 
 def is_visible_podcast_candidate(path: Path) -> bool:
@@ -788,6 +791,33 @@ def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     for path in find_mp3_files(podcast.path):
         episodes.append(read_episode(path, config))
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
+
+
+def has_mp3_file(root: Path) -> bool:
+    seen_dirs: set[Path] = set()
+
+    def walk(directory: Path) -> bool:
+        try:
+            resolved = directory.resolve()
+        except OSError:
+            return False
+
+        if resolved in seen_dirs:
+            return False
+        seen_dirs.add(resolved)
+
+        try:
+            children = sorted(directory.iterdir(), key=lambda path: path.name.lower())
+        except OSError:
+            return False
+
+        for child in children:
+            if child.is_file() and child.suffix.lower() == ".mp3":
+                return True
+
+        return any(child.is_dir() and walk(child) for child in children)
+
+    return walk(root)
 
 
 def find_mp3_files(root: Path) -> list[Path]:

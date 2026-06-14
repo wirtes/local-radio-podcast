@@ -305,12 +305,15 @@ root_directory = "{library_dir}"
                 first_html = first_page.data.decode()
                 self.assertIn("Showing 1-10 of 12 episodes", first_html)
                 self.assertIn("Page 1 of 2", first_html)
+                self.assertIn("First</a>", first_html)
+                self.assertIn("Last</a>", first_html)
                 self.assertIn('name="per_page"', first_html)
                 self.assertIn('<option value="10" selected>10</option>', first_html)
                 self.assertIn('<option value="25">25</option>', first_html)
                 self.assertIn("2026-06-12 Modern Jetset", first_html)
                 self.assertIn("2026-06-03 Modern Jetset", first_html)
                 self.assertNotIn("2026-06-02 Modern Jetset", first_html)
+                self.assertEqual(first_html.count('<article class="card episode-card'), 10)
 
                 second_page = client.get(f"{detail_path}?page=2&per_page=10")
                 second_html = second_page.data.decode()
@@ -332,11 +335,12 @@ root_directory = "{library_dir}"
                 self.assertIn("Showing 1-10 of 12 episodes", invalid_html)
                 self.assertIn('<option value="10" selected>10</option>', invalid_html)
 
-    def test_index_paginates_podcasts_without_reading_later_pages(self) -> None:
+    def test_index_paginates_exact_podcast_count_without_building_later_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             library_dir = root / "library"
             library_dir.mkdir()
+            (library_dir / "Show 05 Empty").mkdir()
             for number in range(1, 13):
                 podcast_dir = library_dir / f"Show {number:02d}"
                 podcast_dir.mkdir()
@@ -362,22 +366,26 @@ root_directory = "{library_dir}"
             flask_app = create_app(config)
             client = flask_app.test_client()
 
-            with patch("app.find_mp3_files", wraps=app_module.find_mp3_files) as find_mp3_files:
+            with patch("app.find_podcast_image", wraps=app_module.find_podcast_image) as find_podcast_image:
                 first_page = client.get("/")
 
             first_html = first_page.data.decode()
             self.assertEqual(first_page.status_code, 200)
             self.assertIn("Showing 1-10 of 12 podcasts", first_html)
             self.assertIn("Page 1 of 2", first_html)
+            self.assertIn("First</a>", first_html)
+            self.assertIn("Last</a>", first_html)
             self.assertIn('name="per_page"', first_html)
             self.assertIn('<option value="10" selected>10</option>', first_html)
             self.assertIn('<option value="25">25</option>', first_html)
             self.assertIn("Show 01", first_html)
+            self.assertNotIn("Show 05 Empty", first_html)
             self.assertIn("Show 10", first_html)
             self.assertNotIn("Show 11", first_html)
             self.assertNotIn("Show 12", first_html)
-            checked_paths = {call.args[0].name for call in find_mp3_files.call_args_list}
-            self.assertEqual(checked_paths, {f"Show {number:02d}" for number in range(1, 11)})
+            self.assertEqual(first_html.count('<div class="card podcast-card'), 10)
+            built_paths = {call.args[0].name for call in find_podcast_image.call_args_list}
+            self.assertEqual(built_paths, {f"Show {number:02d}" for number in range(1, 11)})
 
             second_page = client.get("/?page=2&per_page=10")
             second_html = second_page.data.decode()
