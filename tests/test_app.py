@@ -131,10 +131,18 @@ root_directory = "{library_dir}"
                 self.assertIn(b"data-status-target", index_response.data)
                 self.assertIn(b"copyFeedUrl", index_response.data)
                 self.assertIn(b"Copy feed URL", index_response.data)
+                self.assertIn(b'rel="icon"', index_response.data)
+                self.assertIn(b"favicon-32.png", index_response.data)
+                self.assertIn(b"apple-touch-icon.png", index_response.data)
                 self.assertNotIn(b".git", index_response.data)
                 self.assertNotIn(b".venv", index_response.data)
                 self.assertNotIn(b"__pycache__", index_response.data)
                 self.assertNotIn(b"tests", index_response.data)
+
+                favicon_response = client.get("/favicon.ico")
+                self.assertEqual(favicon_response.status_code, 200)
+                self.assertEqual(favicon_response.mimetype, "image/x-icon")
+                favicon_response.close()
 
                 index_html = index_response.data.decode()
                 detail_path = self._first_link_for(index_html, "Kitchen Radio")
@@ -437,7 +445,7 @@ root_directory = "{library_dir}"
                 self.assertIn("Showing 1-10 of 12 episodes", invalid_html)
                 self.assertIn('<option value="10" selected>10</option>', invalid_html)
 
-    def test_index_paginates_exact_podcast_count_without_building_later_pages(self) -> None:
+    def test_index_defaults_to_all_shows_and_can_paginate_without_building_later_pages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             library_dir = root / "library"
@@ -473,29 +481,35 @@ root_directory = "{library_dir}"
 
             first_html = first_page.data.decode()
             self.assertEqual(first_page.status_code, 200)
-            self.assertIn("Showing 1-10 of 12 podcasts", first_html)
-            self.assertIn("Page 1 of 2", first_html)
+            self.assertIn("Showing 1-12 of 12 podcasts", first_html)
+            self.assertIn("Page 1 of 1", first_html)
             self.assertIn("First</a>", first_html)
             self.assertIn("Last</a>", first_html)
             self.assertIn('name="per_page"', first_html)
-            self.assertIn('<option value="10" selected>10</option>', first_html)
+            self.assertIn('<option value="all" selected>All Shows</option>', first_html)
+            self.assertIn('<option value="10">10</option>', first_html)
             self.assertIn('<option value="25">25</option>', first_html)
             self.assertIn("Show 01", first_html)
             self.assertNotIn("Show 05 Empty", first_html)
             self.assertIn("Show 10", first_html)
-            self.assertNotIn("Show 11", first_html)
-            self.assertNotIn("Show 12", first_html)
-            self.assertEqual(first_html.count('<div class="card podcast-card'), 10)
+            self.assertIn("Show 11", first_html)
+            self.assertIn("Show 12", first_html)
+            self.assertEqual(first_html.count('<div class="card podcast-card'), 12)
             built_paths = {call.args[0].name for call in find_podcast_image.call_args_list}
-            self.assertEqual(built_paths, {f"Show {number:02d}" for number in range(1, 11)})
+            self.assertEqual(built_paths, {f"Show {number:02d}" for number in range(1, 13)})
 
-            second_page = client.get("/?page=2&per_page=10")
+            with patch("app.find_podcast_image", wraps=app_module.find_podcast_image) as find_podcast_image:
+                second_page = client.get("/?page=2&per_page=10")
             second_html = second_page.data.decode()
             self.assertIn("Showing 11-12 of 12 podcasts", second_html)
             self.assertIn("Page 2 of 2", second_html)
+            self.assertIn('<option value="all">All Shows</option>', second_html)
+            self.assertIn('<option value="10" selected>10</option>', second_html)
             self.assertIn("Show 11", second_html)
             self.assertIn("Show 12", second_html)
             self.assertNotIn("Show 10", second_html)
+            built_paths = {call.args[0].name for call in find_podcast_image.call_args_list}
+            self.assertEqual(built_paths, {"Show 11", "Show 12"})
 
             large_page = client.get("/?per_page=25")
             large_html = large_page.data.decode()

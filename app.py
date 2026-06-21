@@ -26,6 +26,7 @@ CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 FILENAME_DATE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})(?:\s+(?P<title>.+))?$")
 ENTRIES_PER_PAGE_OPTIONS = (10, 25, 50, 100)
 DEFAULT_ENTRIES_PER_PAGE = 10
+ALL_SHOWS_PER_PAGE = "all"
 IGNORED_PODCAST_DIRECTORY_NAMES = {"__pycache__", ".venv", "venv", "env", "tests"}
 PODCAST_INFO_FILENAME = "_info.yaml"
 PODCAST_INFO_CACHE: dict[Path, tuple[int | None, tuple[str, ...]]] = {}
@@ -174,6 +175,10 @@ def create_app(config_path: str | Path | None = None) -> Flask:
             return cache_artwork_response(response)
         return no_cache_response(response)
 
+    @app.route("/favicon.ico")
+    def favicon() -> Response:
+        return send_file(Path(app.static_folder or "static") / "favicon.ico", mimetype="image/x-icon")
+
     @app.route("/", methods=["GET", "POST"])
     def index() -> Response:
         if not is_main_page_unlocked(config):
@@ -189,22 +194,31 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         all_podcast_paths = scan_podcast_paths(config)
         podcast_paths = filter_podcast_paths_by_tag(all_podcast_paths, selected_tag)
         available_tags = collect_podcast_tags(all_podcast_paths)
-        per_page = parse_per_page(request.args.get("per_page"))
+        per_page, per_page_value = parse_index_per_page(
+            request.args.get("per_page"),
+            len(podcast_paths),
+        )
         page = parse_page(request.args.get("page"))
         pagination = paginate(len(podcast_paths), page, per_page)
         visible_paths = podcast_paths[pagination.start_index:pagination.end_index]
         podcasts = [build_podcast(config, path) for path in visible_paths]
         podcast_cards = "\n".join(
-            render_podcast_card(config, podcast, per_page) for podcast in podcasts
+            render_podcast_card(config, podcast, per_page_value) for podcast in podcasts
         )
-        pagination_html = render_index_pagination_controls(config, pagination, selected_tag)
-        tag_filter_html = render_tag_filters(config, available_tags, selected_tag, per_page)
+        pagination_html = render_index_pagination_controls(
+            config,
+            pagination,
+            selected_tag,
+            per_page_value,
+        )
+        tag_filter_html = render_tag_filters(config, available_tags, selected_tag, per_page_value)
         body = f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape_html(config.title)}</title>
+  {render_favicon_links(config)}
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body {{
@@ -427,6 +441,7 @@ def render_password_page(config: AppConfig, failed: bool = False) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape_html(config.title)}</title>
+  {render_favicon_links(config)}
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body {{
@@ -455,7 +470,11 @@ def render_password_page(config: AppConfig, failed: bool = False) -> str:
 """
 
 
-def render_podcast_card(config: AppConfig, podcast: Podcast, per_page: int = DEFAULT_ENTRIES_PER_PAGE) -> str:
+def render_podcast_card(
+    config: AppConfig,
+    podcast: Podcast,
+    per_page: int | str = DEFAULT_ENTRIES_PER_PAGE,
+) -> str:
     feed_url = absolute_url("feed", config, podcast_id=podcast.id)
     page_url = absolute_url("podcast_page", config, podcast_id=podcast.id)
     image_url = podcast_image_url(config, podcast)
@@ -505,7 +524,7 @@ def render_podcast_card(config: AppConfig, podcast: Podcast, per_page: int = DEF
       </div>"""
 
 
-def render_podcast_tags(config: AppConfig, tags: tuple[str, ...], per_page: int) -> str:
+def render_podcast_tags(config: AppConfig, tags: tuple[str, ...], per_page: int | str) -> str:
     if not tags:
         return '<div class="podcast-tags mb-2"></div>'
     tag_links = "\n".join(
@@ -569,6 +588,7 @@ def build_podcast_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
+  {render_favicon_links(config)}
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body {{
@@ -653,6 +673,29 @@ def parse_per_page(raw_value: str | None) -> int:
     return DEFAULT_ENTRIES_PER_PAGE
 
 
+def render_favicon_links(config: AppConfig) -> str:
+    favicon_16 = escape_html(absolute_url("static", config, filename="favicon-16.png"))
+    favicon_32 = escape_html(absolute_url("static", config, filename="favicon-32.png"))
+    apple_touch_icon = escape_html(
+        absolute_url("static", config, filename="apple-touch-icon.png")
+    )
+    return (
+        f'<link rel="icon" type="image/png" sizes="16x16" href="{favicon_16}">\n'
+        f'  <link rel="icon" type="image/png" sizes="32x32" href="{favicon_32}">\n'
+        f'  <link rel="apple-touch-icon" sizes="180x180" href="{apple_touch_icon}">'
+    )
+
+
+def parse_index_per_page(raw_value: str | None, total_items: int) -> tuple[int, str]:
+    try:
+        value = int(raw_value or "")
+    except ValueError:
+        return max(total_items, 1), ALL_SHOWS_PER_PAGE
+    if value in ENTRIES_PER_PAGE_OPTIONS:
+        return value, str(value)
+    return max(total_items, 1), ALL_SHOWS_PER_PAGE
+
+
 def parse_page(raw_value: str | None) -> int:
     try:
         value = int(raw_value or "")
@@ -696,7 +739,7 @@ def render_tag_filters(
     config: AppConfig,
     tags: tuple[str, ...],
     selected_tag: str | None,
-    per_page: int,
+    per_page: int | str,
 ) -> str:
     if not tags:
         return ""
@@ -755,17 +798,23 @@ def render_index_pagination_controls(
     config: AppConfig,
     pagination: Pagination,
     selected_tag: str | None,
+    per_page_value: str,
 ) -> str:
-    selected_options = "\n".join(
+    numeric_options = "\n".join(
         f'<option value="{option}"{" selected" if option == pagination.per_page else ""}>{option}</option>'
         for option in ENTRIES_PER_PAGE_OPTIONS
     )
+    all_shows_selected = " selected" if per_page_value == ALL_SHOWS_PER_PAGE else ""
+    selected_options = (
+        f'<option value="{ALL_SHOWS_PER_PAGE}"{all_shows_selected}>All Shows</option>\n'
+        f"{numeric_options}"
+    )
     previous_disabled = " disabled" if pagination.page <= 1 else ""
     next_disabled = " disabled" if pagination.page >= pagination.total_pages else ""
-    first_url = escape_html(index_page_url(config, 1, pagination.per_page, selected_tag))
-    previous_url = escape_html(index_page_url(config, pagination.page - 1, pagination.per_page, selected_tag))
-    next_url = escape_html(index_page_url(config, pagination.page + 1, pagination.per_page, selected_tag))
-    last_url = escape_html(index_page_url(config, pagination.total_pages, pagination.per_page, selected_tag))
+    first_url = escape_html(index_page_url(config, 1, per_page_value, selected_tag))
+    previous_url = escape_html(index_page_url(config, pagination.page - 1, per_page_value, selected_tag))
+    next_url = escape_html(index_page_url(config, pagination.page + 1, per_page_value, selected_tag))
+    last_url = escape_html(index_page_url(config, pagination.total_pages, per_page_value, selected_tag))
     tag_input = (
         ""
         if selected_tag is None
@@ -794,7 +843,12 @@ def render_index_pagination_controls(
         </div>"""
 
 
-def index_page_url(config: AppConfig, page: int, per_page: int, tag: str | None = None) -> str:
+def index_page_url(
+    config: AppConfig,
+    page: int,
+    per_page: int | str,
+    tag: str | None = None,
+) -> str:
     values = {"page": str(max(page, 1)), "per_page": str(per_page)}
     if tag:
         values["tag"] = tag
