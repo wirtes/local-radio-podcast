@@ -317,6 +317,7 @@ sudo ufw allow 8000/tcp
 - Each podcast recursively scans its own directory and year subdirectories for `.mp3` files.
 - The first `.jpg` file in each podcast directory's top level is used as that podcast's cover image.
 - Episode dates are read first from filenames that start with `YYYY-MM-DD`, such as `2026-03-04 Modern Jetset.mp3`.
+- RSS `pubDate` values use `feed.timezone` from `config.toml`; set it to `America/Denver` for Mountain Time.
 - RSS items are sorted newest-first by filename date, then ID3 date metadata, then file modification time.
 - Episode title, artist, album, date, comment/description, duration, and file size are read from MP3 metadata.
 - When MP3 title metadata is missing or only repeats the filename, the filename becomes the episode title.

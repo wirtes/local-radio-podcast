@@ -15,6 +15,8 @@ author = "Your Name"
 language = "en-us"
 explicit = "false"
 category = "Music"
+# Use an IANA timezone for RSS pubDate values. Mountain Time is America/Denver.
+timezone = "America/Denver"
 # image_url = "http://YOUR_LAN_IP:8000/static/cover.jpg"
 
 # Each immediate directory inside this root becomes its own podcast feed.

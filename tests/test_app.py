@@ -701,6 +701,55 @@ root_directory = "{library_dir}"
                 self.assertIn("11 Mar 2026", items[0].findtext("pubDate"))
                 self.assertIn("04 Mar 2026", items[1].findtext("pubDate"))
 
+    def test_feed_timezone_sets_pubdate_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            library_dir = root / "library"
+            audio_dir = library_dir / "Radio Rips"
+            audio_dir.mkdir(parents=True)
+            before_dst = audio_dir / "2026-03-04 Modern Jetset.mp3"
+            after_dst = audio_dir / "2026-03-11 Modern Jetset.mp3"
+            before_dst.write_bytes(b"before")
+            after_dst.write_bytes(b"after")
+
+            config = root / "config.toml"
+            config.write_text(
+                f"""
+[server]
+base_url = "http://127.0.0.1:8000"
+host = "127.0.0.1"
+port = 8000
+
+[feed]
+title = "Kitchen Radio"
+description = "Local shows"
+author = "KVCU"
+timezone = "America/Denver"
+root_directory = "{library_dir}"
+""",
+                encoding="utf-8",
+            )
+
+            with patch("app.MutagenFile", return_value=FakeAudioWithoutTitle()):
+                flask_app = create_app(config)
+                client = flask_app.test_client()
+                index_response = client.get("/")
+                feed_path = self._feed_input_path_for(index_response.data.decode(), "Radio Rips")
+
+                feed_response = client.get(feed_path)
+                self.assertEqual(feed_response.status_code, 200)
+
+                rss = ET.fromstring(feed_response.data)
+                items = rss.findall("./channel/item")
+                self.assertEqual(
+                    items[0].findtext("pubDate"),
+                    "Wed, 11 Mar 2026 00:00:00 -0600",
+                )
+                self.assertEqual(
+                    items[1].findtext("pubDate"),
+                    "Wed, 04 Mar 2026 00:00:00 -0700",
+                )
+
     def test_m4a_files_are_published_as_podcast_episodes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

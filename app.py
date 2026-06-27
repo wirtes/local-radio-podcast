@@ -14,6 +14,7 @@ from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Flask, Response, abort, redirect, request, send_file, session, url_for
 from mutagen import File as MutagenFile
@@ -58,6 +59,7 @@ class AppConfig:
     explicit: str
     image_url: str | None
     category: str
+    timezone: ZoneInfo
     root_directory: Path
     base_url: str | None
     host: str
@@ -140,6 +142,14 @@ def load_config(path: Path) -> AppConfig:
     if not root_directory.is_dir():
         raise ValueError(f"Configured root directory does not exist: {root_directory}")
 
+    timezone_name = str(feed.get("timezone", "UTC"))
+    try:
+        feed_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(
+            f"Unknown feed.timezone: {timezone_name}. Use an IANA timezone like America/Denver."
+        ) from exc
+
     return AppConfig(
         title=str(feed.get("title", "Local MP3 Podcasts")),
         description=str(feed.get("description", "Private podcast feeds from local MP3 folders.")),
@@ -148,6 +158,7 @@ def load_config(path: Path) -> AppConfig:
         explicit=str(feed.get("explicit", "false")).lower(),
         image_url=feed.get("image_url") or None,
         category=str(feed.get("category", "Music")),
+        timezone=feed_timezone,
         root_directory=root_directory,
         base_url=server.get("base_url") or None,
         host=str(server.get("host", "0.0.0.0")),
@@ -348,7 +359,7 @@ def create_app(config_path: str | Path | None = None) -> Flask:
         podcast = find_podcast(config, podcast_id)
         if podcast is None:
             abort(404)
-        episode_paths = scan_episode_paths(podcast)
+        episode_paths = scan_episode_paths(config, podcast)
         per_page = parse_per_page(request.args.get("per_page"))
         page = parse_page(request.args.get("page"))
         pagination = paginate(len(episode_paths), page, per_page)
@@ -1122,17 +1133,24 @@ def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
     return sorted(episodes, key=lambda episode: episode.pubdate, reverse=True)
 
 
-def scan_episode_paths(podcast: Podcast) -> list[Path]:
-    return sorted(find_audio_files(podcast.path), key=episode_path_sort_key, reverse=True)
+def scan_episode_paths(config: AppConfig, podcast: Podcast) -> list[Path]:
+    return sorted(
+        find_audio_files(podcast.path),
+        key=lambda path: episode_path_sort_key(path, config.timezone),
+        reverse=True,
+    )
 
 
-def episode_path_sort_key(path: Path) -> tuple[datetime, str]:
+def episode_path_sort_key(path: Path, feed_timezone: ZoneInfo) -> tuple[datetime, str]:
     try:
         fallback_mtime = path.stat().st_mtime
     except OSError:
         fallback_mtime = 0
     filename_metadata = read_filename_metadata(path)
-    return (parse_pubdate(filename_metadata.get("date"), fallback_mtime), str(path).lower())
+    return (
+        parse_pubdate(filename_metadata.get("date"), fallback_mtime, feed_timezone),
+        str(path).lower(),
+    )
 
 
 def has_audio_file(root: Path) -> bool:
@@ -1222,7 +1240,11 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
     author = metadata.get("artist") or metadata.get("albumartist") or config.author
     episode_info = find_episode_info(path)
     description = episode_info or filename_metadata.get("title") or metadata.get("comment") or metadata.get("description") or title
-    pubdate = parse_pubdate(filename_metadata.get("date") or metadata.get("date"), stat.st_mtime)
+    pubdate = parse_pubdate(
+        filename_metadata.get("date") or metadata.get("date"),
+        stat.st_mtime,
+        config.timezone,
+    )
     duration_seconds = metadata.get("duration_seconds")
 
     return Episode(
@@ -1272,15 +1294,15 @@ def clean_filename_title(title: str) -> str:
     return re.sub(r"\s+", " ", title.replace("_", " ")).strip()
 
 
-def parse_pubdate(raw_date: str | None, fallback_mtime: float) -> datetime:
+def parse_pubdate(raw_date: str | None, fallback_mtime: float, feed_timezone: ZoneInfo) -> datetime:
     if raw_date:
         for fmt, length in (("%Y-%m-%d", 10), ("%Y/%m/%d", 10), ("%Y", 4)):
             try:
                 parsed = datetime.strptime(raw_date[:length], fmt)
-                return parsed.replace(tzinfo=timezone.utc)
+                return parsed.replace(tzinfo=feed_timezone)
             except ValueError:
                 continue
-    return datetime.fromtimestamp(fallback_mtime, timezone.utc)
+    return datetime.fromtimestamp(fallback_mtime, timezone.utc).astimezone(feed_timezone)
 
 
 def build_feed_xml(config: AppConfig, podcast: Podcast, episodes: list[Episode]) -> bytes:
