@@ -9,7 +9,7 @@ import re
 import tomllib
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
@@ -60,6 +60,7 @@ class AppConfig:
     image_url: str | None
     category: str
     timezone: ZoneInfo
+    publish_time: time
     root_directory: Path
     base_url: str | None
     host: str
@@ -149,6 +150,7 @@ def load_config(path: Path) -> AppConfig:
         raise ValueError(
             f"Unknown feed.timezone: {timezone_name}. Use an IANA timezone like America/Denver."
         ) from exc
+    publish_time = parse_publish_time(str(feed.get("publish_time", "00:00")))
 
     return AppConfig(
         title=str(feed.get("title", "Local MP3 Podcasts")),
@@ -159,6 +161,7 @@ def load_config(path: Path) -> AppConfig:
         image_url=feed.get("image_url") or None,
         category=str(feed.get("category", "Music")),
         timezone=feed_timezone,
+        publish_time=publish_time,
         root_directory=root_directory,
         base_url=server.get("base_url") or None,
         host=str(server.get("host", "0.0.0.0")),
@@ -167,6 +170,15 @@ def load_config(path: Path) -> AppConfig:
         or server.get("main_page_password")
         or None,
     )
+
+
+def parse_publish_time(raw_time: str) -> time:
+    try:
+        return time.fromisoformat(raw_time)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid feed.publish_time: {raw_time}. Use HH:MM, such as 07:00."
+        ) from exc
 
 
 def create_app(config_path: str | Path | None = None) -> Flask:
@@ -1136,19 +1148,21 @@ def scan_episodes(config: AppConfig, podcast: Podcast) -> list[Episode]:
 def scan_episode_paths(config: AppConfig, podcast: Podcast) -> list[Path]:
     return sorted(
         find_audio_files(podcast.path),
-        key=lambda path: episode_path_sort_key(path, config.timezone),
+        key=lambda path: episode_path_sort_key(path, config.timezone, config.publish_time),
         reverse=True,
     )
 
 
-def episode_path_sort_key(path: Path, feed_timezone: ZoneInfo) -> tuple[datetime, str]:
+def episode_path_sort_key(
+    path: Path, feed_timezone: ZoneInfo, publish_time: time
+) -> tuple[datetime, str]:
     try:
         fallback_mtime = path.stat().st_mtime
     except OSError:
         fallback_mtime = 0
     filename_metadata = read_filename_metadata(path)
     return (
-        parse_pubdate(filename_metadata.get("date"), fallback_mtime, feed_timezone),
+        parse_pubdate(filename_metadata.get("date"), fallback_mtime, feed_timezone, publish_time),
         str(path).lower(),
     )
 
@@ -1244,6 +1258,7 @@ def read_episode(path: Path, config: AppConfig) -> Episode:
         filename_metadata.get("date") or metadata.get("date"),
         stat.st_mtime,
         config.timezone,
+        config.publish_time,
     )
     duration_seconds = metadata.get("duration_seconds")
 
@@ -1294,12 +1309,23 @@ def clean_filename_title(title: str) -> str:
     return re.sub(r"\s+", " ", title.replace("_", " ")).strip()
 
 
-def parse_pubdate(raw_date: str | None, fallback_mtime: float, feed_timezone: ZoneInfo) -> datetime:
+def parse_pubdate(
+    raw_date: str | None,
+    fallback_mtime: float,
+    feed_timezone: ZoneInfo,
+    publish_time: time,
+) -> datetime:
     if raw_date:
         for fmt, length in (("%Y-%m-%d", 10), ("%Y/%m/%d", 10), ("%Y", 4)):
             try:
                 parsed = datetime.strptime(raw_date[:length], fmt)
-                return parsed.replace(tzinfo=feed_timezone)
+                return parsed.replace(
+                    hour=publish_time.hour,
+                    minute=publish_time.minute,
+                    second=publish_time.second,
+                    microsecond=publish_time.microsecond,
+                    tzinfo=feed_timezone,
+                )
             except ValueError:
                 continue
     return datetime.fromtimestamp(fallback_mtime, timezone.utc).astimezone(feed_timezone)

@@ -17,6 +17,8 @@ explicit = "false"
 category = "Music"
 # Use an IANA timezone for RSS pubDate values. Mountain Time is America/Denver.
 timezone = "America/Denver"
+# Local time to use for date-only episode filenames, in 24-hour HH:MM format.
+publish_time = "07:00"
 # image_url = "http://YOUR_LAN_IP:8000/static/cover.jpg"
 
 # Each immediate directory inside this root becomes its own podcast feed.
